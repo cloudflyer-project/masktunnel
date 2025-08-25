@@ -60,9 +60,9 @@ func (s *Server) handleMITM(clientConn net.Conn, target, userAgent string) {
 		return
 	}
 
-	// Log detailed fingerprint information
+	// Log detailed fingerprint information at debug level
 	if browserFp, err := GetBrowserFingerprint(userAgent); err == nil {
-		log.Info().
+		log.Debug().
 			Str("browser", browserFp.Browser).
 			Str("tls_profile", browserFp.TLSProfile).
 			Str("http2_fingerprint", browserFp.HTTP2Fingerprint).
@@ -123,14 +123,22 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, hos
 		fullURL += "?" + r.URL.RawQuery
 	}
 
-	// Log MITM HTTP request with structured logging
-	log.Info().
-		Str("type", "mitm_request").
+	// Log MITM HTTP request with structured logging including browser info
+	logEvent := log.Info().
 		Str("method", r.Method).
-		Str("url", r.URL.String()).
-		Str("host", host).
-		Str("full_url", fullURL).
-		Msg("MITM HTTP request - azuretls will apply ClientHello fingerprint")
+		Str("url", fullURL).
+		Str("host", host)
+
+	// Add browser fingerprint info if available
+	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
+		if browserFp, err := GetBrowserFingerprint(userAgent); err == nil {
+			logEvent = logEvent.
+				Str("browser", browserFp.Browser).
+				Str("tls_profile", browserFp.TLSProfile)
+		}
+	}
+
+	logEvent.Msg("MITM HTTP request")
 
 	// Create azuretls request
 	azureReq := &azuretls.Request{
@@ -190,18 +198,22 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, hos
 		Request:       r,
 	}
 
-	// Copy response headers
+	// Copy response headers, but skip content-encoding headers
+	// because azuretls automatically decompresses the response
 	for key, values := range resp.Header {
+		// Skip content-encoding related headers since azuretls decompresses the content
+		if strings.ToLower(key) == "content-encoding" ||
+			strings.ToLower(key) == "content-length" {
+			continue
+		}
 		for _, value := range values {
 			httpResp.Header.Add(key, value)
 		}
 	}
 
-	// Update Content-Length if body was modified
-	if len(body) != len(resp.Body) {
-		httpResp.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
-		httpResp.ContentLength = int64(len(body))
-	}
+	// Set correct Content-Length for the decompressed/modified body
+	httpResp.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	httpResp.ContentLength = int64(len(body))
 
 	log.Debug().
 		Str("type", "mitm_response").

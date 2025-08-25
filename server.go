@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Noooste/azuretls-client"
@@ -216,17 +217,21 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Info().Str("content_type", contentType).Msg("Payload injected")
 	}
 
-	// Copy response headers
+	// Copy response headers, but skip content-encoding headers
+	// because azuretls automatically decompresses the response
 	for key, values := range resp.Header {
+		// Skip content-encoding related headers since azuretls decompresses the content
+		if strings.ToLower(key) == "content-encoding" ||
+			strings.ToLower(key) == "content-length" {
+			continue
+		}
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
 
-	// Update Content-Length if body was modified
-	if len(body) != len(resp.Body) {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	}
+	// Set correct Content-Length for the decompressed/modified body
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 
 	// Write response
 	w.WriteHeader(resp.StatusCode)

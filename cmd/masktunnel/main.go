@@ -30,9 +30,6 @@ func main() {
 
 	// Setup zerolog
 	output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
-	output.FormatLevel = func(i interface{}) string {
-		return ""
-	}
 	output.FormatMessage = func(i interface{}) string {
 		return i.(string)
 	}

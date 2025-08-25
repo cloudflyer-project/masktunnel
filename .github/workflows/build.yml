@@ -85,9 +85,9 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          go build -o "hazetunnel-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.extension }}" cmd/hazetunnel/main.go
+          go build -o "masktunnel-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.extension }}" cmd/masktunnel/main.go
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
-          files: hazetunnel-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.extension }}
+          files: masktunnel-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.extension }}

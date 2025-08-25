@@ -30,7 +30,7 @@ type BrowserFingerprint struct {
 	TLSProfile       string
 }
 
-// utls version mapping (ported from hazetunnel)
+// utls version mapping
 var utlsDict = map[string]map[int]string{
 	"Firefox": {
 		-1:  "120", // default to latest supported

@@ -132,7 +132,7 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, hos
 		Str("full_url", fullURL).
 		Msg("MITM HTTP request - azuretls will apply ClientHello fingerprint")
 
-	// Create azuretls request using OrderedHeaders (Header is ignored by azuretls-client)
+	// Create azuretls request
 	azureReq := &azuretls.Request{
 		Method: r.Method,
 		Url:    fullURL,
@@ -143,8 +143,7 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, hos
 		azureReq.OrderedHeaders = azuretls.OrderedHeaders{}
 
 		// Add headers from client request
-		// Note: Go's http.Request.Header is a map so original order is lost,
-		// but at least the headers will be forwarded rather than ignored
+		// Note: Go's http.Request.Header is a map so original order is lost
 		for name, values := range r.Header {
 			for _, value := range values {
 				azureReq.OrderedHeaders = append(azureReq.OrderedHeaders, []string{name, value})

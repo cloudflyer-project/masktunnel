@@ -13,6 +13,8 @@ MaskTunnel is an HTTP proxy that automatically changes its "fingerprint" to matc
 - **JavaScript injection**: Inject custom code to bypass client-side detection
 - **Zero configuration**: Works out-of-the-box with any HTTP client or browser
 
+**TODO**: Due to Golang limitations, will not preserve header order
+
 ## Installation
 
 ### Build from Source

@@ -179,16 +179,19 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log.Debug().Str("url", targetURL.String()).Msg("Using fingerprinted session")
 
-	// Create azuretls request using OrderedHeaders
+	// Create azuretls request
 	azureReq := &azuretls.Request{
 		Method: r.Method,
 		Url:    targetURL.String(),
 		Body:   r.Body,
 	}
 
-	// Convert headers to OrderedHeaders
+	// Convert client headers to OrderedHeaders
 	if len(r.Header) > 0 {
 		azureReq.OrderedHeaders = azuretls.OrderedHeaders{}
+
+		// Add headers from client request
+		// Note: Go's http.Request.Header is a map so original order is lost
 		for name, values := range r.Header {
 			for _, value := range values {
 				azureReq.OrderedHeaders = append(azureReq.OrderedHeaders, []string{name, value})

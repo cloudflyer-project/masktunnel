@@ -1,0 +1,93 @@
+name: Build Release Binaries
+
+on:
+  workflow_dispatch:
+  release:
+    types: [released]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Upload Release Assets
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows builds
+          - os: windows
+            arch: amd64
+            extension: .exe
+          - os: windows
+            arch: arm64
+            extension: .exe
+          
+          # Linux builds
+          - os: linux
+            arch: amd64
+            extension: ""
+          - os: linux
+            arch: arm64
+            extension: ""
+          - os: linux
+            arch: 386
+            extension: ""
+          - os: linux
+            arch: arm
+            extension: ""
+          - os: linux
+            arch: ppc64le
+            extension: ""
+          - os: linux
+            arch: s390x
+            extension: ""
+          - os: linux
+            arch: riscv64
+            extension: ""
+          - os: linux
+            arch: mips64
+            extension: ""
+          
+          # macOS builds
+          - os: darwin
+            arch: amd64
+            extension: ""
+          - os: darwin
+            arch: arm64
+            extension: ""
+
+          # FreeBSD builds
+          - os: freebsd
+            arch: amd64
+            extension: ""
+          - os: freebsd
+            arch: arm64
+            extension: ""
+
+          # OpenBSD builds
+          - os: openbsd
+            arch: amd64
+            extension: ""
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -o "hazetunnel-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.extension }}" cmd/hazetunnel/main.go
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: hazetunnel-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.extension }}

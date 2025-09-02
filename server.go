@@ -182,9 +182,10 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Create azuretls request
 	azureReq := &azuretls.Request{
-		Method: r.Method,
-		Url:    targetURL.String(),
-		Body:   r.Body,
+		Method:           r.Method,
+		Url:              targetURL.String(),
+		Body:             r.Body,
+		DisableRedirects: true,
 	}
 
 	// Convert client headers to OrderedHeaders

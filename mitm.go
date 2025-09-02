@@ -142,8 +142,9 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, hos
 
 	// Create azuretls request
 	azureReq := &azuretls.Request{
-		Method: r.Method,
-		Url:    fullURL,
+		Method:           r.Method,
+		Url:              fullURL,
+		DisableRedirects: true,
 	}
 
 	// Convert client headers to OrderedHeaders

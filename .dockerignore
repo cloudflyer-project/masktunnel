@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# CI/CD
+.github/
+
+# Documentation
+README.md
+LICENSE
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+*_test.go
+test/
+
+# Build artifacts
+masktunnel
+masktunnel-*
+*.exe
+
+# Certificates (will be generated)
+*.pem
+*.crt
+*.key
+
+# Logs
+*.log
+
+# Development
+.env
+.env.local

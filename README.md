@@ -15,17 +15,24 @@ MaskTunnel is an HTTP proxy that automatically changes its "fingerprint" to matc
 
 ## Installation
 
-### Build from Source
+### Docker (Recommended)
 
 ```bash
-git clone <repository-url>
-cd masktunnel
-go build ./cmd/masktunnel
+# Run with default settings
+docker run -p 8080:8080 jackzzs/masktunnel
 ```
 
 ### Binary Releases
 
 Download pre-built binaries from the [releases page](../../releases).
+
+### Build from Source
+
+```bash
+git clone https://github.com/cloudflyer-project/masktunnel
+cd masktunnel
+go build ./cmd/masktunnel
+```
 
 ## Usage
 

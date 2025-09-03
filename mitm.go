@@ -144,6 +144,7 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, hos
 	azureReq := &azuretls.Request{
 		Method:           r.Method,
 		Url:              fullURL,
+		Body:             r.Body,
 		DisableRedirects: true,
 	}
 

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -42,8 +43,13 @@ func (ts *TestServer) Start() error {
 	// HTTP server
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/", ts.handleHTTP)
-	httpMux.HandleFunc("/keepalive", ts.handleKeepAlive)
-	httpMux.HandleFunc("/slow", ts.handleSlow)
+	httpMux.HandleFunc("/redirect/302", ts.handleRedirect302)
+	httpMux.HandleFunc("/redirect/target", ts.handleRedirectTarget)
+	httpMux.HandleFunc("/stream", ts.handleStream)         // backward-compatible chunked
+	httpMux.HandleFunc("/stream/chunked", ts.handleStream) // explicit chunked
+	httpMux.HandleFunc("/html", ts.handleHTML)
+	httpMux.HandleFunc("/stream/fixed", ts.handleFixed)
+	httpMux.HandleFunc("/stream/close", ts.handleClose)
 
 	ts.HTTPServer = &http.Server{
 		Addr:    ":" + ts.HTTPPort,
@@ -53,6 +59,13 @@ func (ts *TestServer) Start() error {
 	// HTTPS server
 	httpsMux := http.NewServeMux()
 	httpsMux.HandleFunc("/", ts.handleHTTPS)
+	httpsMux.HandleFunc("/redirect/302", ts.handleRedirect302)
+	httpsMux.HandleFunc("/redirect/target", ts.handleRedirectTarget)
+	httpsMux.HandleFunc("/stream", ts.handleStream)         // backward-compatible chunked
+	httpsMux.HandleFunc("/stream/chunked", ts.handleStream) // explicit chunked
+	httpsMux.HandleFunc("/html", ts.handleHTML)
+	httpsMux.HandleFunc("/stream/fixed", ts.handleFixed)
+	httpsMux.HandleFunc("/stream/close", ts.handleClose)
 
 	cert, err := ts.generateSelfSignedCert()
 	if err != nil {
@@ -153,53 +166,181 @@ func (ts *TestServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// Keep-alive request handler
-func (ts *TestServer) handleKeepAlive(w http.ResponseWriter, r *http.Request) {
-	requestNum := r.Header.Get("X-Request-Number")
-	if requestNum == "" {
-		requestNum = "1"
+// handleRedirect302 handles 302 redirect requests
+func (ts *TestServer) handleRedirect302(w http.ResponseWriter, r *http.Request) {
+	// Determine target URL based on protocol
+	var targetURL string
+	if r.TLS != nil {
+		// HTTPS request
+		targetURL = fmt.Sprintf("https://localhost:%s/redirect/target", ts.HTTPSPort)
+	} else {
+		// HTTP request
+		targetURL = fmt.Sprintf("http://localhost:%s/redirect/target", ts.HTTPPort)
 	}
 
+	// Log the redirect request
+	log.Info().
+		Str("method", r.Method).
+		Str("url", r.URL.String()).
+		Str("target", targetURL).
+		Bool("tls", r.TLS != nil).
+		Msg("302 redirect request received")
+
+	// Send 302 redirect response
+	w.Header().Set("Location", targetURL)
+	w.Header().Set("X-Test-Type", "redirect-302")
+	w.WriteHeader(http.StatusFound) // 302
+
+	// Include response body for debugging
 	response := map[string]interface{}{
-		"method":      r.Method,
-		"url":         r.URL.String(),
-		"request_num": requestNum,
-		"connection":  r.Header.Get("Connection"),
-		"timestamp":   time.Now().Unix(),
-		"protocol":    "http",
+		"status":    302,
+		"method":    r.Method,
+		"url":       r.URL.String(),
+		"target":    targetURL,
+		"timestamp": time.Now().Unix(),
+		"protocol":  "http",
+		"message":   "This is a 302 redirect response",
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Test-Type", "keepalive")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Keep-Alive", "timeout=30")
+	if r.TLS != nil {
+		response["protocol"] = "https"
+		response["tls"] = true
+	}
+
 	json.NewEncoder(w).Encode(response)
 }
 
-// Slow response handler (for long connection testing)
-func (ts *TestServer) handleSlow(w http.ResponseWriter, r *http.Request) {
-	delayStr := r.URL.Query().Get("delay")
-	delay := 2 * time.Second
-	if delayStr != "" {
-		if d, err := time.ParseDuration(delayStr + "s"); err == nil {
-			delay = d
-		}
+// handleRedirectTarget handles the target of redirect requests
+func (ts *TestServer) handleRedirectTarget(w http.ResponseWriter, r *http.Request) {
+	response := map[string]interface{}{
+		"method":     r.Method,
+		"url":        r.URL.String(),
+		"headers":    r.Header,
+		"user_agent": r.Header.Get("User-Agent"),
+		"timestamp":  time.Now().Unix(),
+		"protocol":   "http",
+		"message":    "This is the redirect target endpoint",
+		"is_target":  true,
 	}
 
-	// Simulate slow response
-	time.Sleep(delay)
-
-	response := map[string]interface{}{
-		"method":    r.Method,
-		"url":       r.URL.String(),
-		"delay":     delay.String(),
-		"timestamp": time.Now().Unix(),
-		"protocol":  "http",
+	if r.TLS != nil {
+		response["protocol"] = "https"
+		response["tls"] = true
+		response["tls_version"] = r.TLS.Version
+		response["cipher_suite"] = r.TLS.CipherSuite
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Test-Type", "slow")
+	w.Header().Set("X-Test-Type", "redirect-target")
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleHTML serves a simple HTML page for payload injection tests
+func (ts *TestServer) handleHTML(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>MaskTunnel Test</title></head><body><h1>HTML Test Page</h1><p>Injection point check.</p></body></html>`))
+}
+
+// handleFixed returns a response with explicit Content-Length
+func (ts *TestServer) handleFixed(w http.ResponseWriter, r *http.Request) {
+	numBytesStr := r.URL.Query().Get("numbytes")
+	numBytes, _ := strconv.Atoi(numBytesStr)
+	if numBytes <= 0 {
+		numBytes = 5
+	}
+	payload := make([]byte, numBytes)
+	for i := 0; i < numBytes; i++ {
+		payload[i] = 'F'
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
+}
+
+// handleClose writes some data and then closes the connection (no chunked, no content-length)
+func (ts *TestServer) handleClose(w http.ResponseWriter, r *http.Request) {
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+	conn, buf, err := hj.Hijack()
+	if err != nil {
+		log.Error().Err(err).Msg("Hijack failed")
+		return
+	}
+	defer conn.Close()
+
+	numBytesStr := r.URL.Query().Get("numbytes")
+	numBytes, _ := strconv.Atoi(numBytesStr)
+	if numBytes <= 0 {
+		numBytes = 5
+	}
+	payload := make([]byte, numBytes)
+	for i := 0; i < numBytes; i++ {
+		payload[i] = 'C'
+	}
+
+	// Raw HTTP/1.1 response with Connection: close, no Content-Length
+	resp := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+	if _, err := buf.WriteString(resp); err != nil {
+		return
+	}
+	if _, err := buf.Write(payload); err != nil {
+		return
+	}
+	_ = buf.Flush()
+	// Close immediately; client should treat close as end-of-message
+}
+
+// handleStream simulates a slow streaming response
+func (ts *TestServer) handleStream(w http.ResponseWriter, r *http.Request) {
+	numBytesStr := r.URL.Query().Get("numbytes")
+	durationStr := r.URL.Query().Get("duration")
+	delayStr := r.URL.Query().Get("delay")
+
+	numBytes, _ := strconv.Atoi(numBytesStr)
+	if numBytes <= 0 {
+		numBytes = 5
+	}
+
+	durationSec, _ := strconv.Atoi(durationStr)
+	if durationSec <= 0 {
+		durationSec = 3
+	}
+
+	delaySec, _ := strconv.Atoi(delayStr)
+	if delaySec > 0 {
+		time.Sleep(time.Duration(delaySec) * time.Second)
+	}
+
+	// Calculate the delay between each byte
+	var sleepPerByte time.Duration
+	if numBytes > 1 {
+		sleepPerByte = time.Duration(durationSec) * time.Second / time.Duration(numBytes-1)
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	for i := 0; i < numBytes; i++ {
+		if _, err := w.Write([]byte("s")); err != nil {
+			log.Error().Err(err).Msg("Error writing stream data")
+			return
+		}
+		flusher.Flush()
+		if i < numBytes-1 {
+			time.Sleep(sleepPerByte)
+		}
+	}
 }
 
 // WebSocket handler
@@ -323,21 +464,28 @@ func CreateProxyClient(proxyPort string, userAgent string) (*http.Client, error)
 
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   10 * time.Second,
+		Timeout:   15 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Do not follow 3xx automatically; let tests inspect 302 and Location
+			return http.ErrUseLastResponse
+		},
 	}
 
 	return client, nil
 }
 
-// CreateDirectClient creates a direct HTTP client (no proxy)
+// CreateDirectClient creates a direct HTTP client (no proxy) with HTTP/2 support
 func CreateDirectClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
 		},
-		Timeout: 10 * time.Second,
+		ForceAttemptHTTP2: true, // Enable HTTP/2 support
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   10 * time.Second,
 	}
 }
 

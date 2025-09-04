@@ -84,7 +84,25 @@ func (p *PayloadInjector) injectIntoHTML(body []byte) []byte {
 
 	bodyStr := string(body)
 
-	// Inject into base64 encoded JavaScript in data URIs
+	// Build a simple <script> wrapper for the payload
+	script := "<script>" + p.payload + "</script>"
+
+	lower := strings.ToLower(bodyStr)
+	// Prefer injecting before </head>
+	if idx := strings.Index(lower, "</head>"); idx != -1 {
+		prefix := bodyStr[:idx]
+		suffix := bodyStr[idx:]
+		bodyStr = prefix + script + suffix
+	} else if idx := strings.Index(lower, "</body>"); idx != -1 {
+		prefix := bodyStr[:idx]
+		suffix := bodyStr[idx:]
+		bodyStr = prefix + script + suffix
+	} else {
+		// Fallback: append at end
+		bodyStr += script
+	}
+
+	// Also try to modify base64 data:javascript if any
 	bodyStr = p.injectIntoBase64Scripts(bodyStr)
 
 	return []byte(bodyStr)

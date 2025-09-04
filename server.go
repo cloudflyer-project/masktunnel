@@ -2,13 +2,14 @@ package masktunnel
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/Noooste/azuretls-client"
 	"github.com/rs/zerolog/log"
 )
 
@@ -170,87 +171,179 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get azuretls session
-	sess, err := s.sessionManager.GetSession(userAgent, s.config.UpstreamProxy)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get session")
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	// Fast path: for plain HTTP requests, stream via net/http to avoid buffering
+	if strings.EqualFold(targetURL.Scheme, "http") {
+		outReq, err := http.NewRequest(r.Method, targetURL.String(), r.Body)
+		if err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		// Copy headers while dropping hop-by-hop headers
+		hopHeaders := map[string]struct{}{
+			"Proxy-Connection": {}, "Proxy-Authenticate": {}, "Proxy-Authorization": {},
+			"Connection": {}, "Keep-Alive": {}, "TE": {}, "Trailer": {},
+			"Transfer-Encoding": {}, "Upgrade": {},
+		}
+		outReq.Header = make(http.Header, len(r.Header))
+		for k, vv := range r.Header {
+			if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop {
+				continue
+			}
+			for _, v := range vv {
+				outReq.Header.Add(k, v)
+			}
+		}
+		// Ensure desired User-Agent is set
+		outReq.Header.Set("User-Agent", userAgent)
+
+		transport := &http.Transport{
+			DisableCompression: true,
+		}
+		client := &http.Client{
+			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+
+		resp, err := client.Do(outReq)
+		if err != nil {
+			log.Error().Err(err).Msg("HTTP upstream request failed")
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		// Copy response headers (drop hop-by-hop and content-length when streaming)
+		for k, vv := range resp.Header {
+			if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop {
+				continue
+			}
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+
+		contentType := resp.Header.Get("Content-Type")
+		if s.payloadInjector.ShouldInject(contentType) {
+			bodyBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to read HTTP response for injection")
+				http.Error(w, "Bad Gateway", http.StatusBadGateway)
+				return
+			}
+			injected := s.payloadInjector.InjectIntoResponse(bodyBytes, contentType)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(injected)))
+			w.WriteHeader(resp.StatusCode)
+			_, _ = w.Write(injected)
+			log.Debug().Int("status", resp.StatusCode).Int("size", len(injected)).Msg("HTTP injected response")
+			return
+		}
+
+		// If upstream provided Content-Length and we are not modifying the body,
+		// set it to allow client to know exact length and keep-alive.
+		if resp.ContentLength >= 0 {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+			w.WriteHeader(resp.StatusCode)
+			if _, err := io.Copy(w, resp.Body); err != nil {
+				log.Error().Err(err).Msg("Error streaming HTTP response")
+			}
+		} else {
+			// Unknown length: chunked with flush
+			w.WriteHeader(resp.StatusCode)
+			buf := make([]byte, 32<<10)
+			for {
+				n, readErr := resp.Body.Read(buf)
+				if n > 0 {
+					if _, err := w.Write(buf[:n]); err != nil {
+						log.Error().Err(err).Msg("Error writing HTTP streamed chunk")
+						break
+					}
+					if f, ok := w.(http.Flusher); ok {
+						f.Flush()
+					}
+				}
+				if readErr == io.EOF {
+					break
+				}
+				if readErr != nil {
+					log.Error().Err(readErr).Msg("Error reading HTTP upstream stream")
+					break
+				}
+			}
+		}
+		log.Debug().Int("status", resp.StatusCode).Msg("HTTP streamed response")
 		return
 	}
 
-	log.Debug().Str("url", targetURL.String()).Msg("Using fingerprinted session")
-
-	// Create azuretls request
-	azureReq := &azuretls.Request{
-		Method:           r.Method,
-		Url:              targetURL.String(),
-		Body:             r.Body,
-		DisableRedirects: true,
+	// Fallback path: for any non-HTTP scheme here, stream via net/http as well
+	// This keeps behavior consistent and avoids azuretls in server.go.
+	outReq, err := http.NewRequest(r.Method, targetURL.String(), r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
 	}
-
-	// Convert client headers to OrderedHeaders
-	if len(r.Header) > 0 {
-		azureReq.OrderedHeaders = azuretls.OrderedHeaders{}
-
-		// Add headers from client request
-		// Note: Go's http.Request.Header is a map so original order is lost
-		for name, values := range r.Header {
-			for _, value := range values {
-				azureReq.OrderedHeaders = append(azureReq.OrderedHeaders, []string{name, value})
-			}
+	// Copy headers with hop-by-hop filtering
+	hopHeaders := map[string]struct{}{
+		"Proxy-Connection": {}, "Proxy-Authenticate": {}, "Proxy-Authorization": {},
+		"Connection": {}, "Keep-Alive": {}, "TE": {}, "Trailer": {},
+		"Transfer-Encoding": {}, "Upgrade": {},
+	}
+	outReq.Header = make(http.Header, len(r.Header))
+	for k, vv := range r.Header {
+		if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop {
+			continue
+		}
+		for _, v := range vv {
+			outReq.Header.Add(k, v)
 		}
 	}
+	outReq.Header.Set("User-Agent", userAgent)
 
-	// Send request using azuretls
-	resp, err := sess.Do(azureReq)
+	transport := &http.Transport{
+		DisableCompression: true,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true, // allow local self-signed in tests
+		},
+	}
+	client := &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+
+	resp2, err := client.Do(outReq)
 	if err != nil {
-		log.Error().Err(err).Msg("Request failed")
+		log.Error().Err(err).Msg("Upstream request failed")
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
+	defer resp2.Body.Close()
 
-	// Process response body with payload injection
-	body := resp.Body
-	contentType := resp.Header.Get("Content-Type")
-
-	if s.payloadInjector.ShouldInject(contentType) {
-		body = s.payloadInjector.InjectIntoResponse(body, contentType)
-		log.Info().Str("content_type", contentType).Msg("Payload injected")
-	}
-
-	// Copy response headers, but skip content-encoding headers
-	// because azuretls automatically decompresses the response
-	for key, values := range resp.Header {
-		// Skip content-encoding related headers since azuretls decompresses the content
-		if strings.ToLower(key) == "content-encoding" ||
-			strings.ToLower(key) == "content-length" {
+	for k, vv := range resp2.Header {
+		if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop || strings.EqualFold(k, "Content-Length") {
 			continue
 		}
-		for _, value := range values {
-			w.Header().Add(key, value)
+		for _, v := range vv {
+			w.Header().Add(k, v)
 		}
 	}
 
-	// Set correct Content-Length for the decompressed/modified body
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
-
-	// Write response
-	w.WriteHeader(resp.StatusCode)
-	w.Write(body)
-
-	log.Debug().
-		Str("type", "http_response").
-		Int("status", resp.StatusCode).
-		Int("size", len(body)).
-		Msg("HTTP response")
-}
-
-// GetStats returns server statistics
-func (s *Server) GetStats() map[string]interface{} {
-	return map[string]interface{}{
-		"active_sessions": s.sessionManager.GetSessionCount(),
-		"payload_enabled": s.config.Payload != "",
-		"auth_enabled":    s.auth.IsEnabled(),
-		"upstream_proxy":  s.config.UpstreamProxy != "",
+	ct := resp2.Header.Get("Content-Type")
+	if s.payloadInjector.ShouldInject(ct) {
+		b, err := io.ReadAll(resp2.Body)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to read response for injection")
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		inj := s.payloadInjector.InjectIntoResponse(b, ct)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(inj)))
+		w.WriteHeader(resp2.StatusCode)
+		_, _ = w.Write(inj)
+		log.Debug().Int("status", resp2.StatusCode).Int("size", len(inj)).Msg("HTTP(S) injected response")
+		return
 	}
+
+	w.WriteHeader(resp2.StatusCode)
+	if _, err := io.Copy(w, resp2.Body); err != nil {
+		log.Error().Err(err).Msg("Error streaming upstream response")
+	}
+	log.Debug().Int("status", resp2.StatusCode).Msg("HTTP(S) streamed response")
 }

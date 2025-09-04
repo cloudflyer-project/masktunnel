@@ -18,14 +18,16 @@ import (
 )
 
 const (
-	ProxyPort = "19080"
-	HTTPPort  = "19081"
-	HTTPSPort = "19443"
+	ProxyPort          = "19080"
+	InjectionProxyPort = "19082"
+	HTTPPort           = "19081"
+	HTTPSPort          = "19443"
 )
 
 var (
-	testServer  *TestServer
-	proxyServer *masktunnel.Server
+	testServer             *TestServer
+	proxyServer            *masktunnel.Server
+	proxyServerWithPayload *masktunnel.Server
 )
 
 // TestMain sets up the test environment
@@ -51,6 +53,19 @@ func TestMain(m *testing.M) {
 		}
 	}()
 
+	// Start proxy server with payload injection
+	payloadConfig := &masktunnel.Config{
+		Port:    InjectionProxyPort,
+		Payload: "window.__masktunnel_injected = true; console.log('MaskTunnel payload injected');",
+		Verbose: false,
+	}
+	proxyServerWithPayload = masktunnel.NewServer(payloadConfig)
+	go func() {
+		if err := proxyServerWithPayload.Start(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("Proxy server with payload error")
+		}
+	}()
+
 	// Wait for servers to start
 	time.Sleep(2 * time.Second)
 	log.Info().Msg("Test environment ready")
@@ -62,6 +77,9 @@ func TestMain(m *testing.M) {
 	testServer.Stop()
 	if proxyServer != nil {
 		proxyServer.Stop()
+	}
+	if proxyServerWithPayload != nil {
+		proxyServerWithPayload.Stop()
 	}
 
 	os.Exit(code)
@@ -154,37 +172,15 @@ func TestBasicProxy(t *testing.T) {
 
 // TestPayloadInjection tests JavaScript payload injection functionality
 func TestPayloadInjection(t *testing.T) {
-	// Store original proxy server
-	originalProxy := proxyServer
-
 	t.Run("HTTP", func(t *testing.T) {
-		// Restart proxy with payload injection enabled
-		proxyServer.Stop()
-		time.Sleep(1 * time.Second)
-
-		config := &masktunnel.Config{
-			Port:    ProxyPort,
-			Payload: "window.__masktunnel_injected = true; console.log('MaskTunnel payload injected');",
-			Verbose: false,
-		}
-
-		proxyServer = masktunnel.NewServer(config)
-		go func() {
-			if err := proxyServer.Start(); err != nil && err != http.ErrServerClosed {
-				log.Error().Err(err).Msg("Proxy server with payload error")
-			}
-		}()
-
-		time.Sleep(2 * time.Second)
-
 		// Test payload injection with HTML content
-		client, err := CreateProxyClient(ProxyPort, UserAgents["Chrome"])
+		client, err := CreateProxyClient(InjectionProxyPort, UserAgents["Chrome"])
 		if err != nil {
 			t.Fatalf("Failed to create proxy client: %v", err)
 		}
 
 		// Test with a site that returns HTML content
-		req, err := http.NewRequest("GET", "http://httpbin.org/html", nil)
+		req, err := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/html", HTTPPort), nil)
 		if err != nil {
 			t.Fatalf("Failed to create payload test request: %v", err)
 		}
@@ -234,7 +230,7 @@ func TestPayloadInjection(t *testing.T) {
 
 	t.Run("HTTPS", func(t *testing.T) {
 		// Test HTTPS payload injection with the same configuration
-		client, err := CreateProxyClient(ProxyPort, UserAgents["Chrome"])
+		client, err := CreateProxyClient(InjectionProxyPort, UserAgents["Chrome"])
 		if err != nil {
 			t.Fatalf("Failed to create proxy client: %v", err)
 		}
@@ -287,17 +283,6 @@ func TestPayloadInjection(t *testing.T) {
 
 		t.Log("HTTPS payload injection test completed")
 	})
-
-	// Restore original proxy without payload for other tests
-	proxyServer.Stop()
-	time.Sleep(1 * time.Second)
-	proxyServer = originalProxy
-	go func() {
-		if err := proxyServer.Start(); err != nil && err != http.ErrServerClosed {
-			log.Error().Err(err).Msg("Normal proxy server restart error")
-		}
-	}()
-	time.Sleep(2 * time.Second)
 }
 
 // TestConcurrentConnections tests concurrent connections and data isolation

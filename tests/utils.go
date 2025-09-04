@@ -41,11 +41,11 @@ func (ts *TestServer) Start() error {
 	httpMux.HandleFunc("/", ts.handleHTTP)
 	httpMux.HandleFunc("/redirect/302", ts.handleRedirect302)
 	httpMux.HandleFunc("/redirect/target", ts.handleRedirectTarget)
-	httpMux.HandleFunc("/stream", ts.handleStream)         // backward-compatible chunked
-	httpMux.HandleFunc("/stream/chunked", ts.handleStream) // explicit chunked
+	httpMux.HandleFunc("/stream", ts.handleStreamChunked)         // backward-compatible chunked
+	httpMux.HandleFunc("/stream/chunked", ts.handleStreamChunked) // explicit chunked
 	httpMux.HandleFunc("/html", ts.handleHTML)
-	httpMux.HandleFunc("/stream/fixed", ts.handleFixed)
-	httpMux.HandleFunc("/stream/close", ts.handleClose)
+	httpMux.HandleFunc("/stream/fixed", ts.handleStreamFixed)
+	httpMux.HandleFunc("/stream/close", ts.handleStreamClose)
 
 	ts.HTTPServer = &http.Server{
 		Addr:    ":" + ts.HTTPPort,
@@ -57,11 +57,11 @@ func (ts *TestServer) Start() error {
 	httpsMux.HandleFunc("/", ts.handleHTTPS)
 	httpsMux.HandleFunc("/redirect/302", ts.handleRedirect302)
 	httpsMux.HandleFunc("/redirect/target", ts.handleRedirectTarget)
-	httpsMux.HandleFunc("/stream", ts.handleStream)         // backward-compatible chunked
-	httpsMux.HandleFunc("/stream/chunked", ts.handleStream) // explicit chunked
+	httpsMux.HandleFunc("/stream", ts.handleStreamChunked)         // backward-compatible chunked
+	httpsMux.HandleFunc("/stream/chunked", ts.handleStreamChunked) // explicit chunked
 	httpsMux.HandleFunc("/html", ts.handleHTML)
-	httpsMux.HandleFunc("/stream/fixed", ts.handleFixed)
-	httpsMux.HandleFunc("/stream/close", ts.handleClose)
+	httpsMux.HandleFunc("/stream/fixed", ts.handleStreamFixed)
+	httpsMux.HandleFunc("/stream/close", ts.handleStreamClose)
 
 	cert, err := ts.generateSelfSignedCert()
 	if err != nil {
@@ -220,8 +220,8 @@ func (ts *TestServer) handleHTML(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>MaskTunnel Test</title></head><body><h1>HTML Test Page</h1><p>Injection point check.</p></body></html>`))
 }
 
-// handleFixed returns a response with explicit Content-Length
-func (ts *TestServer) handleFixed(w http.ResponseWriter, r *http.Request) {
+// handleStreamFixed returns a response with explicit Content-Length
+func (ts *TestServer) handleStreamFixed(w http.ResponseWriter, r *http.Request) {
 	numBytesStr := r.URL.Query().Get("numbytes")
 	numBytes, _ := strconv.Atoi(numBytesStr)
 	if numBytes <= 0 {
@@ -237,8 +237,8 @@ func (ts *TestServer) handleFixed(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(payload)
 }
 
-// handleClose writes some data and then closes the connection (no chunked, no content-length)
-func (ts *TestServer) handleClose(w http.ResponseWriter, r *http.Request) {
+// handleStreamClose writes some data and then closes the connection (no chunked, no content-length)
+func (ts *TestServer) handleStreamClose(w http.ResponseWriter, r *http.Request) {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
@@ -273,8 +273,8 @@ func (ts *TestServer) handleClose(w http.ResponseWriter, r *http.Request) {
 	// Close immediately; client should treat close as end-of-message
 }
 
-// handleStream simulates a slow streaming response
-func (ts *TestServer) handleStream(w http.ResponseWriter, r *http.Request) {
+// handleStreamChunked simulates a slow streaming response
+func (ts *TestServer) handleStreamChunked(w http.ResponseWriter, r *http.Request) {
 	numBytesStr := r.URL.Query().Get("numbytes")
 	durationStr := r.URL.Query().Get("duration")
 	delayStr := r.URL.Query().Get("delay")

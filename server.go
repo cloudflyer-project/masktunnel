@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -140,210 +138,130 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 // handleHTTP handles regular HTTP requests
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Get or override User-Agent
-	userAgent := r.Header.Get("User-Agent")
-
-	logEvent := log.Debug().
+	log.Debug().
 		Str("type", "http_request").
 		Str("method", r.Method).
-		Str("url", r.RequestURI)
+		Str("url", r.RequestURI).
+		Msg("Handling plain HTTP request")
 
-	if s.config.UserAgent != "" && userAgent != s.config.UserAgent {
-		logEvent.Str("original_user_agent", userAgent)
-		userAgent = s.config.UserAgent
-		r.Header.Set("User-Agent", userAgent)
-	} else if s.config.UserAgent != "" {
-		userAgent = s.config.UserAgent
-		r.Header.Set("User-Agent", userAgent)
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
-	logEvent.Str("user_agent", userAgent).Msg("HTTP request")
-
-	if userAgent == "" {
-		http.Error(w, "User-Agent header required", http.StatusBadRequest)
-		return
-	}
-
-	// Parse target URL
-	targetURL, err := url.Parse(r.RequestURI)
-	if err != nil {
-		http.Error(w, "Invalid request URI", http.StatusBadRequest)
-		return
-	}
-
-	// Fast path: for plain HTTP requests, stream via net/http to avoid buffering
-	if strings.EqualFold(targetURL.Scheme, "http") {
-		outReq, err := http.NewRequest(r.Method, targetURL.String(), r.Body)
-		if err != nil {
-			http.Error(w, "Bad Request", http.StatusBadRequest)
-			return
-		}
-		// Copy headers while dropping hop-by-hop headers
-		hopHeaders := map[string]struct{}{
-			"Proxy-Connection": {}, "Proxy-Authenticate": {}, "Proxy-Authorization": {},
-			"Connection": {}, "Keep-Alive": {}, "TE": {}, "Trailer": {},
-			"Transfer-Encoding": {}, "Upgrade": {},
-		}
-		outReq.Header = make(http.Header, len(r.Header))
-		for k, vv := range r.Header {
-			if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop {
-				continue
-			}
-			for _, v := range vv {
-				outReq.Header.Add(k, v)
-			}
-		}
-		// Ensure desired User-Agent is set
-		outReq.Header.Set("User-Agent", userAgent)
-
-		transport := &http.Transport{
-			DisableCompression: true,
-		}
-		client := &http.Client{
-			Transport: transport,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-
-		resp, err := client.Do(outReq)
-		if err != nil {
-			log.Error().Err(err).Msg("HTTP upstream request failed")
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-
-		// Copy response headers (drop hop-by-hop and content-length when streaming)
-		for k, vv := range resp.Header {
-			if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop {
-				continue
-			}
-			for _, v := range vv {
-				w.Header().Add(k, v)
-			}
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		if s.payloadInjector.ShouldInject(contentType) {
-			bodyBytes, err := io.ReadAll(resp.Body)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to read HTTP response for injection")
-				http.Error(w, "Bad Gateway", http.StatusBadGateway)
-				return
-			}
-			injected := s.payloadInjector.InjectIntoResponse(bodyBytes, contentType)
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(injected)))
-			w.WriteHeader(resp.StatusCode)
-			_, _ = w.Write(injected)
-			log.Debug().Int("status", resp.StatusCode).Int("size", len(injected)).Msg("HTTP injected response")
-			return
-		}
-
-		// If upstream provided Content-Length and we are not modifying the body,
-		// set it to allow client to know exact length and keep-alive.
-		if resp.ContentLength >= 0 {
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
-			w.WriteHeader(resp.StatusCode)
-			if _, err := io.Copy(w, resp.Body); err != nil {
-				log.Error().Err(err).Msg("Error streaming HTTP response")
-			}
-		} else {
-			// Unknown length: chunked with flush
-			w.WriteHeader(resp.StatusCode)
-			buf := make([]byte, 32<<10)
-			for {
-				n, readErr := resp.Body.Read(buf)
-				if n > 0 {
-					if _, err := w.Write(buf[:n]); err != nil {
-						log.Error().Err(err).Msg("Error writing HTTP streamed chunk")
-						break
-					}
-					if f, ok := w.(http.Flusher); ok {
-						f.Flush()
-					}
-				}
-				if readErr == io.EOF {
-					break
-				}
-				if readErr != nil {
-					log.Error().Err(readErr).Msg("Error reading HTTP upstream stream")
-					break
-				}
-			}
-		}
-		log.Debug().Int("status", resp.StatusCode).Msg("HTTP streamed response")
-		return
-	}
-
-	// Fallback path: for any non-HTTP scheme here, stream via net/http as well
-	// This keeps behavior consistent and avoids azuretls in server.go.
-	outReq, err := http.NewRequest(r.Method, targetURL.String(), r.Body)
+	outReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	// Copy headers with hop-by-hop filtering
-	hopHeaders := map[string]struct{}{
-		"Proxy-Connection": {}, "Proxy-Authenticate": {}, "Proxy-Authorization": {},
-		"Connection": {}, "Keep-Alive": {}, "TE": {}, "Trailer": {},
-		"Transfer-Encoding": {}, "Upgrade": {},
-	}
-	outReq.Header = make(http.Header, len(r.Header))
-	for k, vv := range r.Header {
-		if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop {
-			continue
-		}
-		for _, v := range vv {
-			outReq.Header.Add(k, v)
-		}
-	}
-	outReq.Header.Set("User-Agent", userAgent)
 
-	transport := &http.Transport{
-		DisableCompression: true,
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, // allow local self-signed in tests
-		},
-	}
-	client := &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+	outReq.Header = make(http.Header)
+	copyHeaders(outReq.Header, r.Header)
+	removeHopByHopHeaders(outReq.Header)
 
-	resp2, err := client.Do(outReq)
+	if s.config.UserAgent != "" {
+		outReq.Header.Set("User-Agent", s.config.UserAgent)
+	}
+
+	resp, err := transport.RoundTrip(outReq)
 	if err != nil {
-		log.Error().Err(err).Msg("Upstream request failed")
+		log.Error().Err(err).Msg("HTTP upstream request failed")
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
-	defer resp2.Body.Close()
+	defer resp.Body.Close()
 
-	for k, vv := range resp2.Header {
-		if _, hop := hopHeaders[http.CanonicalHeaderKey(k)]; hop || strings.EqualFold(k, "Content-Length") {
-			continue
-		}
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
+	contentType := resp.Header.Get("Content-Type")
 
-	ct := resp2.Header.Get("Content-Type")
-	if s.payloadInjector.ShouldInject(ct) {
-		b, err := io.ReadAll(resp2.Body)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to read response for injection")
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+	if !s.payloadInjector.ShouldInject(contentType) {
+		removeHopByHopHeaders(resp.Header)
+		copyHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			// Fallback for non-flushable writers, though rare for HTTP
+			if _, err := io.Copy(w, resp.Body); err != nil {
+				log.Error().Err(err).Msg("Error streaming HTTP response (fallback)")
+			}
 			return
 		}
-		inj := s.payloadInjector.InjectIntoResponse(b, ct)
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(inj)))
-		w.WriteHeader(resp2.StatusCode)
-		_, _ = w.Write(inj)
-		log.Debug().Int("status", resp2.StatusCode).Int("size", len(inj)).Msg("HTTP(S) injected response")
+
+		// Explicitly flush headers to the client immediately
+		flusher.Flush()
+
+		// Use a manual loop with flushing to ensure true streaming
+		buf := make([]byte, 32*1024) // 32KB buffer, a common size
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+					log.Error().Err(writeErr).Msg("Error writing chunk to client")
+					break
+				}
+				flusher.Flush() // Flush after each chunk is written
+			}
+			if err == io.EOF {
+				break // End of stream
+			}
+			if err != nil {
+				log.Error().Err(err).Msg("Error reading from upstream response")
+				break
+			}
+		}
 		return
 	}
 
-	w.WriteHeader(resp2.StatusCode)
-	if _, err := io.Copy(w, resp2.Body); err != nil {
-		log.Error().Err(err).Msg("Error streaming upstream response")
+	log.Debug().Str("content_type", contentType).Msg("Payload injection required for HTTP request, buffering response")
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to read response body for injection")
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
 	}
-	log.Debug().Int("status", resp2.StatusCode).Msg("HTTP(S) streamed response")
+
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	processedBody, _, err := injectWithReencode(s.payloadInjector, bodyBytes, contentType, contentEncoding)
+	if err != nil {
+		log.Error().Err(err).Str("content_encoding", contentEncoding).Msg("Failed to re-encode body, sending original.")
+		processedBody = bodyBytes
+	} else {
+		log.Info().Str("content_type", contentType).Msg("Payload injected into HTTP response")
+	}
+
+	removeHopByHopHeaders(resp.Header)
+	copyHeaders(w.Header(), resp.Header)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(processedBody)))
+	w.Header().Del("Transfer-Encoding")
+
+	w.WriteHeader(resp.StatusCode)
+	if _, err := w.Write(processedBody); err != nil {
+		log.Error().Err(err).Msg("Error writing injected HTTP response")
+	}
+}
+
+// copyHeaders copies all headers from src to dst.
+func copyHeaders(dst, src http.Header) {
+	for k, vv := range src {
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+}
+
+// removeHopByHopHeaders removes headers that are not meant to be forwarded.
+func removeHopByHopHeaders(h http.Header) {
+	// https://www.rfc-editor.org/rfc/rfc2616#section-13.5.1
+	hopHeaders := []string{
+		"Connection",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Te",
+		"Trailers",
+		"Transfer-Encoding",
+		"Upgrade",
+	}
+	for _, k := range hopHeaders {
+		h.Del(k)
+	}
 }

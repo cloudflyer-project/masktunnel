@@ -145,15 +145,12 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, tar
 		Url:              fullURL,
 		Body:             r.Body,
 		DisableRedirects: true,
-		IgnoreBody:       true, // Enable streaming by default
+		IgnoreBody:       true, // Enable response body streaming
 	}
 
 	// Convert client headers to OrderedHeaders
 	if len(r.Header) > 0 {
-		azureReq.OrderedHeaders = azuretls.OrderedHeaders{}
-
-		// Add headers from client request
-		// Note: Go's http.Request.Header is a map so original order is lost
+		azureReq.OrderedHeaders = make(azuretls.OrderedHeaders, 0, len(r.Header))
 		for name, values := range r.Header {
 			for _, value := range values {
 				azureReq.OrderedHeaders = append(azureReq.OrderedHeaders, []string{name, value})
@@ -161,10 +158,7 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, tar
 		}
 	}
 
-	// Crucial fix for HTTP/2 fingerprinting:
-	// For requests without a body (like GET), Go's http.Request has a non-nil Body (http.NoBody).
-	// We must explicitly set Body to nil so that azuretls-client sends the HEADERS frame
-	// with the EndStream flag set, which is critical for a correct fingerprint hash.
+	// Crucial fix for HTTP/2 fingerprinting: ensure nil body for requests without content.
 	if r.ContentLength == 0 {
 		azureReq.Body = nil
 	} else {
@@ -178,114 +172,103 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, tar
 		return nil, false, err
 	}
 
-	// By default, we stream the response. If we need to inject payload,
-	// we'll read the body into memory.
-	bodyStream := resp.RawBody
+	// Decide whether to inject payload based on Content-Type
 	contentType := resp.Header.Get("Content-Type")
+	bodyStream := resp.RawBody
 
-	// If no payload injection is needed, directly stream upstream response preserving framing
+	// --- PATH 1: Stream-through (No Injection) ---
 	if !s.payloadInjector.ShouldInject(contentType) {
-		var sb strings.Builder
-		sb.WriteString("HTTP/1.1 ")
-		if resp.Status != "" {
-			sb.WriteString(resp.Status)
-		} else {
-			sb.WriteString(fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
-		}
-		sb.WriteString("\r\n")
+		// Write the status line and headers as received from upstream
+		var headerBuilder strings.Builder
+		headerBuilder.WriteString(fmt.Sprintf("HTTP/1.1 %s\r\n", resp.Status))
 
-		// Preserve headers but manage Connection/length semantics ourselves
-		hasCL := false
-		hasTE := false
-		for key, values := range resp.Header {
-			lk := strings.ToLower(key)
-			if lk == "connection" {
-				continue
-			}
-			if lk == "content-length" {
-				hasCL = true
-			}
-			if lk == "transfer-encoding" {
-				hasTE = true
-			}
-			for _, value := range values {
-				sb.WriteString(key)
-				sb.WriteString(": ")
-				sb.WriteString(value)
-				sb.WriteString("\r\n")
-			}
+		// The upstream client (azuretls) decodes chunked encoding automatically and removes the
+		// Transfer-Encoding header. We must re-chunk the response if Content-Length is missing
+		// to signal the end of the stream to the downstream client.
+		contentLength := resp.Header.Get("Content-Length")
+		useChunked := contentLength == ""
+		if useChunked {
+			resp.Header.Set("Transfer-Encoding", "chunked")
+			// We are re-chunking, so Content-Length from upstream (if any) is no longer valid.
+			resp.Header.Del("Content-Length")
 		}
 
-		// If neither Content-Length nor Transfer-Encoding: enforce close-delimited by adding Connection: close
-		if !hasCL && !hasTE {
-			sb.WriteString("Connection: close\r\n")
-		}
+		resp.Header.Write(&headerBuilder)
+		headerBuilder.WriteString("\r\n")
 
-		sb.WriteString("\r\n")
-
-		if _, err := io.WriteString(clientConn, sb.String()); err != nil {
+		if _, err := io.WriteString(clientConn, headerBuilder.String()); err != nil {
 			_ = bodyStream.Close()
 			return nil, false, err
 		}
 
-		if _, err := io.Copy(clientConn, bodyStream); err != nil {
+		// Use a custom writer that re-chunks the data if necessary.
+		writer := NewChunkedWriter(clientConn, useChunked)
+		if _, err := io.Copy(writer, bodyStream); err != nil {
 			_ = bodyStream.Close()
 			return nil, false, err
 		}
+		// Finalize the stream (writes the 0-length chunk if needed)
+		writer.Close()
+
 		_ = bodyStream.Close()
 
-		// Mirror/Enforce close-delimited semantics when required
-		if !hasCL && !hasTE {
-			_ = clientConn.Close()
-		} else if strings.EqualFold(resp.Header.Get("Connection"), "close") {
-			_ = clientConn.Close()
-		}
-
 		log.Debug().Str("type", "mitm_response").Int("status", resp.StatusCode).Msg("Directly streamed MITM response")
-		return nil, true, nil
+		return nil, true, nil // Return true to indicate it was streamed
 	}
 
-	// Payload injection path: buffer, inject, and return a normal response object
+	// --- PATH 2: Buffer and Inject ---
+	defer bodyStream.Close()
 	bodyBytes, err := io.ReadAll(bodyStream)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to read response body for injection")
-		_ = bodyStream.Close()
 		return nil, false, err
 	}
-	_ = bodyStream.Close()
 
-	injectedBody := s.payloadInjector.InjectIntoResponse(bodyBytes, contentType)
-	log.Info().Str("content_type", contentType).Msg("Payload injected")
+	// Decode, inject payload, and re-encode
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	processedBody, _, err := injectWithReencode(s.payloadInjector, bodyBytes, contentType, contentEncoding)
+	if err != nil {
+		log.Error().Err(err).Str("content_encoding", contentEncoding).Msg("Failed to re-encode body, sending original.")
+		processedBody = bodyBytes // Fallback to original body on error
+	} else {
+		log.Info().Str("content_type", contentType).Msg("Payload injected and body re-encoded")
+	}
 
+	// Create a new standard library http.Response to send back to the client.
 	httpResp := &http.Response{
 		Status:        resp.Status,
 		StatusCode:    resp.StatusCode,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
 		ProtoMinor:    1,
-		Header:        make(http.Header),
-		Body:          io.NopCloser(bytes.NewReader(injectedBody)),
-		ContentLength: int64(len(injectedBody)),
+		Header:        fromFhttpHeader(resp.Header), // Convert fhttp.Header to http.Header
+		Body:          io.NopCloser(bytes.NewReader(processedBody)),
+		ContentLength: int64(len(processedBody)),
 		Request:       r,
 	}
-	for key, values := range resp.Header {
-		lk := strings.ToLower(key)
-		if lk == "transfer-encoding" {
-			continue
-		}
-		for _, value := range values {
-			httpResp.Header.Add(key, value)
-		}
-	}
-	httpResp.Header.Set("Content-Length", fmt.Sprintf("%d", len(injectedBody)))
+	// We are now sending a buffered response, so we must manage framing.
+	// Set Content-Length and remove Transfer-Encoding.
+	httpResp.Header.Set("Content-Length", fmt.Sprintf("%d", len(processedBody)))
+	httpResp.Header.Del("Transfer-Encoding")
 
 	log.Debug().
 		Str("type", "mitm_response").
 		Int("status", resp.StatusCode).
-		Int("size", len(injectedBody)).
-		Msg("MITM HTTP response with payload")
+		Int("size", len(processedBody)).
+		Msg("MITM HTTP response with injected payload")
 
-	return httpResp, false, nil
+	return httpResp, false, nil // Return false to indicate it's a buffered response object
+}
+
+// fromFhttpHeader converts an fhttp.Header to a standard http.Header.
+func fromFhttpHeader(fhttpHeader map[string][]string) http.Header {
+	httpHeader := make(http.Header)
+	for k, vv := range fhttpHeader {
+		for _, v := range vv {
+			httpHeader.Add(k, v)
+		}
+	}
+	return httpHeader
 }
 
 // getCertificateForHost returns a certificate for the given host
@@ -296,3 +279,55 @@ func (s *Server) getCertificateForHost(host string) (tls.Certificate, error) {
 	}
 	return *cert, nil
 }
+
+// ChunkedWriter is a helper to wrap a net.Conn to write in chunked encoding format.
+type ChunkedWriter struct {
+	conn       net.Conn
+	useChunked bool
+}
+
+// NewChunkedWriter creates a new ChunkedWriter.
+func NewChunkedWriter(conn net.Conn, useChunked bool) *ChunkedWriter {
+	return &ChunkedWriter{conn: conn, useChunked: useChunked}
+}
+
+// Write implements io.Writer. It writes data in chunked format if useChunked is true.
+func (cw *ChunkedWriter) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	if cw.useChunked {
+		// Write chunk size, then chunk data, then CRLF
+		if _, err := fmt.Fprintf(cw.conn, "%x\r\n", len(p)); err != nil {
+			return 0, err
+		}
+		if _, err := cw.conn.Write(p); err != nil {
+			return 0, err
+		}
+		if _, err := io.WriteString(cw.conn, "\r\n"); err != nil {
+			return 0, err
+		}
+	} else {
+		// Not chunked, write data directly
+		if _, err := cw.conn.Write(p); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+// Close finalizes the stream. For chunked encoding, it writes the final zero-length chunk.
+// This is implicitly called by io.Copy when the source reader returns EOF.
+func (cw *ChunkedWriter) Close() error {
+	if cw.useChunked {
+		log.Debug().Msg("Writing final zero-length chunk to close stream.")
+		_, err := io.WriteString(cw.conn, "0\r\n\r\n")
+		return err
+	}
+	return nil
+}
+
+// We need to implement io.Closer for the writer passed to io.Copy to be closed correctly.
+// Since io.Copy checks for io.WriteCloser to call Close, we add the Close method.
+var _ io.WriteCloser = (*ChunkedWriter)(nil)

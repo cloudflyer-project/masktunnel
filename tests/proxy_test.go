@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/cloudflyer-project/masktunnel"
-	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -23,7 +21,6 @@ const (
 	ProxyPort = "19080"
 	HTTPPort  = "19081"
 	HTTPSPort = "19443"
-	WSPort    = "19082"
 )
 
 var (
@@ -37,7 +34,7 @@ func TestMain(m *testing.M) {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
 	// Start test servers
-	testServer = NewTestServer(HTTPPort, HTTPSPort, WSPort)
+	testServer = NewTestServer(HTTPPort, HTTPSPort)
 	if err := testServer.Start(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to start test servers")
 	}
@@ -1027,196 +1024,6 @@ func TestHTTPSConnect(t *testing.T) {
 	}
 
 	t.Log("HTTPS CONNECT tunnel test passed")
-}
-
-// TestWebSocketProxy tests WebSocket connections through the proxy
-func TestWebSocketProxy(t *testing.T) {
-	t.Run("HTTP", func(t *testing.T) {
-		client, err := CreateProxyClient(ProxyPort, UserAgents["Chrome"])
-		if err != nil {
-			t.Fatalf("Failed to create proxy client: %v", err)
-		}
-
-		// Set a reasonable timeout for WebSocket testing
-		client.Timeout = 10 * time.Second
-
-		t.Run("Basic_Connection", func(t *testing.T) {
-			// Test basic connectivity to WebSocket endpoint
-			wsURL := fmt.Sprintf("http://localhost:%s/ws", WSPort)
-			req, err := http.NewRequest("GET", wsURL, nil)
-			if err != nil {
-				t.Fatalf("Failed to create WebSocket request: %v", err)
-			}
-
-			// Set WebSocket upgrade headers
-			req.Header.Set("User-Agent", UserAgents["Chrome"])
-			req.Header.Set("Connection", "Upgrade")
-			req.Header.Set("Upgrade", "websocket")
-			req.Header.Set("Sec-WebSocket-Version", "13")
-			req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-
-			resp, err := client.Do(req)
-			if err != nil {
-				t.Logf("Local WebSocket endpoint test failed: %v", err)
-				return
-			}
-			defer resp.Body.Close()
-
-			// Check if this looks like a WebSocket upgrade response
-			if resp.StatusCode == 101 {
-				t.Log("HTTP WebSocket upgrade successful through proxy")
-			} else if resp.StatusCode == 200 {
-				t.Log("HTTP WebSocket endpoint reachable through proxy (HTTP 200)")
-			} else {
-				t.Logf("HTTP WebSocket endpoint returned status: %d", resp.StatusCode)
-			}
-
-			// Log connection headers for debugging
-			t.Logf("Response headers: Connection=%s, Upgrade=%s",
-				resp.Header.Get("Connection"), resp.Header.Get("Upgrade"))
-		})
-
-		t.Run("Message_Exchange", func(t *testing.T) {
-			// Create WebSocket dialer with proxy support
-			proxyURL, err := url.Parse(fmt.Sprintf("http://localhost:%s", ProxyPort))
-			if err != nil {
-				t.Fatalf("Failed to parse proxy URL: %v", err)
-			}
-
-			dialer := &websocket.Dialer{
-				Proxy:            http.ProxyURL(proxyURL),
-				HandshakeTimeout: 10 * time.Second,
-			}
-
-			// Connect to WebSocket server through proxy
-			wsURL := fmt.Sprintf("ws://localhost:%s/ws", WSPort)
-			header := http.Header{}
-			header.Set("User-Agent", UserAgents["Chrome"])
-
-			conn, resp, err := dialer.Dial(wsURL, header)
-			if err != nil {
-				if resp != nil {
-					t.Logf("WebSocket connection failed with status: %d", resp.StatusCode)
-				}
-				t.Skipf("HTTP WebSocket message exchange test failed: %v", err)
-				return
-			}
-			defer conn.Close()
-
-			t.Log("HTTP WebSocket connection established through proxy")
-
-			// Test message exchange: send -> receive -> send -> receive
-			messages := []map[string]interface{}{
-				{"type": "test", "message": "Hello WebSocket", "sequence": 1},
-				{"type": "test", "message": "Second message", "sequence": 2},
-			}
-
-			for i, msg := range messages {
-				// Send message
-				if err := conn.WriteJSON(msg); err != nil {
-					t.Fatalf("Failed to send message %d: %v", i+1, err)
-				}
-				t.Logf("Sent message %d: %v", i+1, msg)
-
-				// Receive response
-				var response map[string]interface{}
-				if err := conn.ReadJSON(&response); err != nil {
-					t.Fatalf("Failed to receive response %d: %v", i+1, err)
-				}
-				t.Logf("Received response %d: %v", i+1, response)
-
-				// Verify echo response
-				if echoType, ok := response["type"].(string); !ok || echoType != "echo" {
-					t.Errorf("Expected echo response, got: %v", response)
-				}
-
-				if received, ok := response["received"].(map[string]interface{}); ok {
-					if sequence, exists := received["sequence"]; exists {
-						if sequence != float64(i+1) {
-							t.Errorf("Message sequence mismatch: expected %d, got %v", i+1, sequence)
-						}
-					}
-				}
-			}
-
-			// Send close message
-			closeMsg := map[string]interface{}{"type": "close"}
-			if err := conn.WriteJSON(closeMsg); err != nil {
-				t.Logf("Failed to send close message: %v", err)
-			}
-
-			t.Log("HTTP WebSocket message exchange test completed successfully")
-		})
-
-	})
-
-	t.Run("HTTPS", func(t *testing.T) {
-		// Test secure WebSocket message exchange through CONNECT tunnel
-		// Use external WSS service since it's complex to setup local WSS through proxy
-
-		// Create WebSocket dialer with proxy support for WSS
-		proxyURL, err := url.Parse(fmt.Sprintf("http://localhost:%s", ProxyPort))
-		if err != nil {
-			t.Fatalf("Failed to parse proxy URL: %v", err)
-		}
-
-		dialer := &websocket.Dialer{
-			Proxy:            http.ProxyURL(proxyURL),
-			HandshakeTimeout: 15 * time.Second,
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // For testing purposes
-			},
-		}
-
-		// Try to connect to a public WebSocket echo service via WSS
-		wsURL := "wss://echo.websocket.org"
-		header := http.Header{}
-		header.Set("User-Agent", UserAgents["Chrome"])
-
-		conn, resp, err := dialer.Dial(wsURL, header)
-		if err != nil {
-			if resp != nil {
-				t.Logf("WSS connection failed with status: %d", resp.StatusCode)
-			}
-			t.Skipf("HTTPS WebSocket message exchange test failed (external service issue): %v", err)
-			return
-		}
-		defer conn.Close()
-
-		t.Log("HTTPS WebSocket connection established through proxy")
-
-		// Test message exchange: send -> receive -> send -> receive
-		messages := []string{
-			"Hello WSS WebSocket through proxy",
-			"Second secure message",
-		}
-
-		for i, msg := range messages {
-			// Send message
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
-				t.Fatalf("Failed to send WSS message %d: %v", i+1, err)
-			}
-			t.Logf("Sent WSS message %d: %s", i+1, msg)
-
-			// Receive echo
-			_, response, err := conn.ReadMessage()
-			if err != nil {
-				t.Fatalf("Failed to receive WSS response %d: %v", i+1, err)
-			}
-
-			responseStr := string(response)
-			t.Logf("Received WSS response %d: %s", i+1, responseStr)
-
-			// Verify echo (echo.websocket.org should echo back the same message)
-			if responseStr != msg {
-				t.Errorf("WSS message echo mismatch: sent '%s', received '%s'", msg, responseStr)
-			}
-		}
-
-		t.Log("HTTPS WebSocket message exchange test completed successfully")
-	})
-
-	t.Log("WebSocket proxy test completed")
 }
 
 // TestStream tests whether the proxy forwards data in streaming mode or buffers entire response

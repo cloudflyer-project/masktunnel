@@ -7,7 +7,7 @@ toolchain go1.24.4
 require (
 	github.com/Noooste/azuretls-client v1.11.0
 	github.com/cristalhq/base64 v0.1.2
-	github.com/gorilla/websocket v1.5.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/mileusna/useragent v1.3.4
 	github.com/rs/zerolog v1.34.0
 )

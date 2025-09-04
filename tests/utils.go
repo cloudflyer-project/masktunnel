@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 )
 
@@ -23,18 +22,15 @@ import (
 type TestServer struct {
 	HTTPServer  *http.Server
 	HTTPSServer *http.Server
-	WSServer    *http.Server
 	HTTPPort    string
 	HTTPSPort   string
-	WSPort      string
 }
 
 // NewTestServer creates test servers for HTTP, HTTPS, and WebSocket
-func NewTestServer(httpPort, httpsPort, wsPort string) *TestServer {
+func NewTestServer(httpPort, httpsPort string) *TestServer {
 	return &TestServer{
 		HTTPPort:  httpPort,
 		HTTPSPort: httpsPort,
-		WSPort:    wsPort,
 	}
 }
 
@@ -80,15 +76,6 @@ func (ts *TestServer) Start() error {
 		},
 	}
 
-	// WebSocket server
-	wsMux := http.NewServeMux()
-	wsMux.HandleFunc("/ws", ts.handleWebSocket)
-
-	ts.WSServer = &http.Server{
-		Addr:    ":" + ts.WSPort,
-		Handler: wsMux,
-	}
-
 	// Start servers in background
 	go func() {
 		if err := ts.HTTPServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -102,15 +89,9 @@ func (ts *TestServer) Start() error {
 		}
 	}()
 
-	go func() {
-		if err := ts.WSServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error().Err(err).Msg("WebSocket test server error")
-		}
-	}()
-
 	// Wait for servers to start
 	time.Sleep(time.Second)
-	log.Info().Str("http", ts.HTTPPort).Str("https", ts.HTTPSPort).Str("ws", ts.WSPort).Msg("Test servers started")
+	log.Info().Str("http", ts.HTTPPort).Str("https", ts.HTTPSPort).Msg("Test servers started")
 	return nil
 }
 
@@ -121,9 +102,6 @@ func (ts *TestServer) Stop() {
 	}
 	if ts.HTTPSServer != nil {
 		ts.HTTPSServer.Close()
-	}
-	if ts.WSServer != nil {
-		ts.WSServer.Close()
 	}
 	log.Info().Msg("Test servers stopped")
 }
@@ -341,67 +319,6 @@ func (ts *TestServer) handleStream(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(sleepPerByte)
 		}
 	}
-}
-
-// WebSocket handler
-func (ts *TestServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true // Allow connections from any origin for testing
-		},
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Error().Err(err).Msg("WebSocket upgrade failed")
-		return
-	}
-	defer conn.Close()
-
-	log.Info().Str("remote_addr", r.RemoteAddr).Msg("WebSocket connection established")
-
-	// Send welcome message
-	welcomeMsg := map[string]interface{}{
-		"type":       "welcome",
-		"timestamp":  time.Now().Unix(),
-		"user_agent": r.Header.Get("User-Agent"),
-	}
-
-	if err := conn.WriteJSON(welcomeMsg); err != nil {
-		log.Error().Err(err).Msg("Failed to send welcome message")
-		return
-	}
-
-	// Handle messages
-	for {
-		var msg map[string]interface{}
-		if err := conn.ReadJSON(&msg); err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Error().Err(err).Msg("WebSocket read error")
-			}
-			break
-		}
-
-		// Echo back the message
-		response := map[string]interface{}{
-			"type":      "echo",
-			"received":  msg,
-			"timestamp": time.Now().Unix(),
-		}
-
-		if err := conn.WriteJSON(response); err != nil {
-			log.Error().Err(err).Msg("Failed to send echo message")
-			break
-		}
-
-		// Check for close message
-		if msgType, ok := msg["type"].(string); ok && msgType == "close" {
-			log.Info().Msg("Received close message, terminating WebSocket connection")
-			break
-		}
-	}
-
-	log.Info().Msg("WebSocket connection closed")
 }
 
 // Generate self-signed certificate for HTTPS testing

@@ -1,6 +1,8 @@
 package test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -44,6 +46,7 @@ func (ts *TestServer) Start() error {
 	httpMux.HandleFunc("/stream", ts.handleStreamChunked)         // backward-compatible chunked
 	httpMux.HandleFunc("/stream/chunked", ts.handleStreamChunked) // explicit chunked
 	httpMux.HandleFunc("/html", ts.handleHTML)
+	httpMux.HandleFunc("/gzip", ts.handleGzip)
 	httpMux.HandleFunc("/stream/fixed", ts.handleStreamFixed)
 	httpMux.HandleFunc("/stream/close", ts.handleStreamClose)
 
@@ -60,6 +63,7 @@ func (ts *TestServer) Start() error {
 	httpsMux.HandleFunc("/stream", ts.handleStreamChunked)         // backward-compatible chunked
 	httpsMux.HandleFunc("/stream/chunked", ts.handleStreamChunked) // explicit chunked
 	httpsMux.HandleFunc("/html", ts.handleHTML)
+	httpsMux.HandleFunc("/gzip", ts.handleGzip)
 	httpsMux.HandleFunc("/stream/fixed", ts.handleStreamFixed)
 	httpsMux.HandleFunc("/stream/close", ts.handleStreamClose)
 
@@ -218,6 +222,22 @@ func (ts *TestServer) handleHTML(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>MaskTunnel Test</title></head><body><h1>HTML Test Page</h1><p>Injection point check.</p></body></html>`))
+}
+
+// handleGzip returns a gzipped response.
+func (ts *TestServer) handleGzip(w http.ResponseWriter, r *http.Request) {
+	originalContent := "this content was gzipped"
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write([]byte(originalContent)); err != nil {
+		http.Error(w, "Failed to gzip content", http.StatusInternalServerError)
+		return
+	}
+	gz.Close() // Important to close the writer to flush all data
+
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write(buf.Bytes())
 }
 
 // handleStreamFixed returns a response with explicit Content-Length

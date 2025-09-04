@@ -285,6 +285,73 @@ func TestPayloadInjection(t *testing.T) {
 	})
 }
 
+// TestContentEncoding verifies that the proxy correctly handles content encoding.
+func TestContentEncoding(t *testing.T) {
+	expectedContent := "this content was gzipped"
+
+	t.Run("HTTP", func(t *testing.T) {
+		client, err := CreateProxyClient(ProxyPort, UserAgents["Chrome"])
+		if err != nil {
+			t.Fatalf("Failed to create proxy client: %v", err)
+		}
+
+		req, err := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/gzip", HTTPPort), nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if ce := resp.Header.Get("Content-Encoding"); ce != "" {
+			t.Errorf("Expected Content-Encoding header to be removed by proxy, but got: %s", ce)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		if string(body) != expectedContent {
+			t.Errorf("Expected body '%s', but got '%s'", expectedContent, string(body))
+		}
+	})
+
+	t.Run("HTTPS", func(t *testing.T) {
+		client, err := CreateProxyClient(ProxyPort, UserAgents["Chrome"])
+		if err != nil {
+			t.Fatalf("Failed to create proxy client: %v", err)
+		}
+
+		req, err := http.NewRequest("GET", fmt.Sprintf("https://localhost:%s/gzip", HTTPSPort), nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if ce := resp.Header.Get("Content-Encoding"); ce != "" {
+			t.Errorf("Expected Content-Encoding header to be removed by proxy, but got: %s", ce)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		if string(body) != expectedContent {
+			t.Errorf("Expected body '%s', but got '%s'", expectedContent, string(body))
+		}
+	})
+}
+
 // TestConcurrentConnections tests concurrent connections and data isolation
 func TestConcurrentConnections(t *testing.T) {
 	numConnections := 10

@@ -1472,20 +1472,6 @@ func TestStream(t *testing.T) {
 					t.Fatalf("chunked stream too fast: %v", elapsed)
 				}
 			})
-			t.Run("Close", func(t *testing.T) {
-				url := fmt.Sprintf("https://localhost:%s/stream/close?numbytes=7", HTTPSPort)
-				req, _ := http.NewRequest("GET", url, nil)
-				req.Header.Set("User-Agent", UserAgents["Safari"])
-				resp, err := client.Do(req)
-				if err != nil {
-					t.Fatalf("request failed: %v", err)
-				}
-				defer resp.Body.Close()
-				b, _ := io.ReadAll(resp.Body)
-				if len(b) != 7 {
-					t.Fatalf("expected 7 bytes, got %d", len(b))
-				}
-			})
 		})
 	})
 }

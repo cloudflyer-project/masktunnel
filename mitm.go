@@ -70,7 +70,7 @@ func (s *Server) handleTLSConnection(clientTLSConn *tls.Conn, target string) {
 		// Use the same reader to maintain buffer state across requests
 		req, err := http.ReadRequest(reader)
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && !strings.Contains(err.Error(), "use of closed network connection") {
 				log.Error().Err(err).Msg("Failed to read HTTP request")
 			}
 			break

@@ -231,7 +231,6 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	removeHopByHopHeaders(resp.Header)
 	copyHeaders(w.Header(), resp.Header)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(processedBody)))
-	w.Header().Del("Transfer-Encoding")
 
 	w.WriteHeader(resp.StatusCode)
 	if _, err := w.Write(processedBody); err != nil {

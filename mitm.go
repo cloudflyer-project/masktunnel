@@ -178,6 +178,11 @@ func (s *Server) processMITMRequest(r *http.Request, sess *azuretls.Session, tar
 
 	// --- PATH 1: Stream-through (No Injection) ---
 	if !s.payloadInjector.ShouldInject(contentType) {
+		// The upstream client (azuretls) decodes the body automatically.
+		// We must remove compression-related headers before forwarding.
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+
 		// Write the status line and headers as received from upstream
 		var headerBuilder strings.Builder
 		headerBuilder.WriteString(fmt.Sprintf("HTTP/1.1 %s\r\n", resp.Status))

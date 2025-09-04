@@ -105,8 +105,11 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 		log.Debug().Str("proxy", upstreamProxy).Msg("Configured upstream proxy")
 	}
 
-	// Configure other options
-	session.InsecureSkipVerify = true // skip certificate verification
+	// Disable auto decompression
+	session.DisableAutoDecompression = true
+
+	// Disable license checking
+	session.InsecureSkipVerify = true
 
 	return session, nil
 }

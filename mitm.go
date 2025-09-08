@@ -74,7 +74,6 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ServerName:   hostname,
-		NextProtos:   []string{"h2", "http/1.1"}, // Support both HTTP/2 and HTTP/1.1
 	}
 
 	// Wrap client connection with TLS

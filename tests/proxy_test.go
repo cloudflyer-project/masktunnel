@@ -1347,12 +1347,8 @@ func TestWebsocket(t *testing.T) {
 		testWebSocketHTTP(t)
 	})
 
-	t.Run("HTTPS/H1", func(t *testing.T) {
-		testWebSocketHTTPSH1(t)
-	})
-
-	t.Run("HTTPS/H2", func(t *testing.T) {
-		testWebSocketHTTPSH2(t)
+	t.Run("HTTPS", func(t *testing.T) {
+		testWebSocketHTTPS(t)
 	})
 }
 
@@ -1403,8 +1399,8 @@ func testWebSocketHTTP(t *testing.T) {
 	t.Log("HTTP WebSocket proxy test passed")
 }
 
-// testWebSocketHTTPSH1 tests WebSocket over HTTPS with HTTP/1.1 (wss:// over H1)
-func testWebSocketHTTPSH1(t *testing.T) {
+// testWebSocketHTTPS tests WebSocket over HTTPS (wss://)
+func testWebSocketHTTPS(t *testing.T) {
 	// Configure a websocket dialer to use the masktunnel proxy
 	proxyURL, err := url.Parse("http://localhost:" + ProxyPort)
 	if err != nil {
@@ -1452,56 +1448,4 @@ func testWebSocketHTTPSH1(t *testing.T) {
 	}
 
 	t.Log("HTTPS/H1 WebSocket proxy test passed")
-}
-
-// testWebSocketHTTPSH2 tests WebSocket over HTTPS with HTTP/2 (wss:// over H2)
-func testWebSocketHTTPSH2(t *testing.T) {
-	// Configure a websocket dialer to use the masktunnel proxy
-	proxyURL, err := url.Parse("http://localhost:" + ProxyPort)
-	if err != nil {
-		t.Fatalf("Failed to parse proxy URL: %v", err)
-	}
-
-	dialer := &websocket.Dialer{
-		Proxy: func(req *fhttp.Request) (*url.URL, error) {
-			return proxyURL, nil
-		},
-		HandshakeTimeout: 10 * time.Second,
-		TLSClientConfig: &utls.Config{
-			InsecureSkipVerify: true,           // Skip certificate verification for test
-			NextProtos:         []string{"h2"}, // Force HTTP/2
-		},
-	}
-
-	// Dial using wss:// protocol
-	wssURL := "wss://localhost:" + WebSocketSSLPort + "/ws"
-	header := fhttp.Header{}
-	header.Set("User-Agent", UserAgents["Chrome"]) // Use Chrome which typically supports H2
-
-	conn, resp, err := dialer.Dial(wssURL, header, nil)
-	if err != nil {
-		t.Fatalf("HTTPS/H2 WebSocket dial failed: %v", err)
-	}
-	defer conn.Close()
-
-	if resp.StatusCode != fhttp.StatusSwitchingProtocols {
-		t.Errorf("Expected status 101, got: %d", resp.StatusCode)
-	}
-
-	// Test bidirectional communication
-	message := []byte("hello HTTPS/H2 websocket")
-	if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-		t.Fatalf("Failed to write message: %v", err)
-	}
-
-	_, p, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("Failed to read message: %v", err)
-	}
-
-	if string(p) != string(message) {
-		t.Errorf("Expected message '%s', got: '%s'", message, p)
-	}
-
-	t.Log("HTTPS/H2 WebSocket proxy test passed")
 }

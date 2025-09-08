@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -82,6 +83,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle WebSocket Upgrade requests for HTTP
+	if s.isWebSocketUpgrade(r) {
+		s.handleWebSocketUpgrade(w, r)
+		return
+	}
+
 	// Handle regular HTTP requests
 	s.handleHTTP(w, r)
 }
@@ -103,12 +110,6 @@ func (s *Server) sendAuthRequired(w http.ResponseWriter) {
 
 // handleConnect handles CONNECT method with MITM capability
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
-	// Get User-Agent for fingerprinting
-	userAgent := r.Header.Get("User-Agent")
-	if s.config.UserAgent != "" {
-		userAgent = s.config.UserAgent
-	}
-
 	// Log simple CONNECT request
 	log.Debug().
 		Str("type", "connect").
@@ -132,13 +133,13 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clientConn.Close()
 
-	// Start MITM handling
-	s.handleMITM(clientConn, r.RequestURI, userAgent)
+	// All CONNECT requests go through MITM for protocol detection
+	s.handleMITM(clientConn, r.RequestURI)
 }
 
 // handleHTTP handles regular HTTP requests
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Debug().
+	log.Info().
 		Str("type", "http_request").
 		Str("method", r.Method).
 		Str("url", r.RequestURI).
@@ -225,7 +226,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Error().Err(err).Str("content_encoding", contentEncoding).Msg("Failed to re-encode body, sending original.")
 		processedBody = bodyBytes
 	} else {
-		log.Info().Str("content_type", contentType).Msg("Payload injected into HTTP response")
+		log.Debug().Str("content_type", contentType).Msg("Payload injected into HTTP response")
 	}
 
 	removeHopByHopHeaders(resp.Header)
@@ -263,4 +264,128 @@ func removeHopByHopHeaders(h http.Header) {
 	for _, k := range hopHeaders {
 		h.Del(k)
 	}
+}
+
+// removeHopByHopHeadersExceptWebSocket removes hop-by-hop headers but preserves WebSocket-specific headers
+func removeHopByHopHeadersExceptWebSocket(h http.Header) {
+	// For WebSocket, we need to preserve Connection, Upgrade, and WebSocket-specific headers
+	hopHeaders := []string{
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Te",
+		"Trailers",
+		"Transfer-Encoding",
+	}
+	for _, k := range hopHeaders {
+		h.Del(k)
+	}
+}
+
+// isWebSocketUpgrade checks if the request is a WebSocket upgrade request
+func (s *Server) isWebSocketUpgrade(r *http.Request) bool {
+	upgrade := r.Header.Get("Upgrade")
+	connection := r.Header.Get("Connection")
+	wsKey := r.Header.Get("Sec-WebSocket-Key")
+
+	isUpgrade := strings.ToLower(upgrade) == "websocket"
+	hasConnection := strings.Contains(strings.ToLower(connection), "upgrade")
+	hasWSKey := wsKey != ""
+
+	log.Debug().
+		Str("upgrade", upgrade).
+		Str("connection", connection).
+		Str("ws_key", wsKey).
+		Bool("is_websocket", isUpgrade && hasConnection && hasWSKey).
+		Msg("Checking WebSocket upgrade in MITM")
+
+	return isUpgrade && hasConnection && hasWSKey
+}
+
+// handleWebSocketUpgrade handles HTTP WebSocket upgrade requests by proxying them
+func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
+	log.Debug().
+		Str("type", "websocket_upgrade").
+		Str("url", r.RequestURI).
+		Msg("Handling HTTP WebSocket upgrade request")
+
+	// Create upstream request
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	outReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// Copy headers, preserving WebSocket-specific ones
+	outReq.Header = make(http.Header)
+	copyHeaders(outReq.Header, r.Header)
+	removeHopByHopHeadersExceptWebSocket(outReq.Header)
+
+	if s.config.UserAgent != "" {
+		outReq.Header.Set("User-Agent", s.config.UserAgent)
+	}
+
+	// Make the upstream request
+	resp, err := transport.RoundTrip(outReq)
+	if err != nil {
+		log.Error().Err(err).Msg("WebSocket upstream request failed")
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+
+	// Check if upstream accepted the WebSocket upgrade
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		log.Error().Int("status", resp.StatusCode).Msg("Upstream rejected WebSocket upgrade")
+		defer resp.Body.Close()
+
+		// Forward the rejection response
+		copyHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+		return
+	}
+
+	// Copy response headers for successful upgrade
+	removeHopByHopHeadersExceptWebSocket(resp.Header)
+	copyHeaders(w.Header(), resp.Header)
+	w.WriteHeader(http.StatusSwitchingProtocols)
+
+	// Get the hijacker to access raw connections
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to hijack client connection")
+		return
+	}
+	defer clientConn.Close()
+
+	// Get the upstream connection
+	upstreamConn, ok := resp.Body.(io.ReadWriteCloser)
+	if !ok {
+		log.Error().Msg("Upstream connection is not a ReadWriteCloser")
+		return
+	}
+	defer upstreamConn.Close()
+
+	log.Debug().Str("url", r.RequestURI).Msg("HTTP WebSocket tunnel established")
+
+	// Start bidirectional copying
+	go func() {
+		defer clientConn.Close()
+		defer upstreamConn.Close()
+		io.Copy(upstreamConn, clientConn)
+	}()
+
+	defer clientConn.Close()
+	defer upstreamConn.Close()
+	io.Copy(clientConn, upstreamConn)
 }

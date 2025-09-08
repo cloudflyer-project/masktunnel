@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	fhttp "github.com/Noooste/fhttp"
+	utls "github.com/Noooste/utls"
+	"github.com/Noooste/websocket"
 	"github.com/cloudflyer-project/masktunnel"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -22,6 +26,8 @@ const (
 	InjectionProxyPort = "19082"
 	HTTPPort           = "19081"
 	HTTPSPort          = "19443"
+	WebSocketPort      = "19083"
+	WebSocketSSLPort   = "19084"
 )
 
 var (
@@ -33,10 +39,10 @@ var (
 // TestMain sets up the test environment
 func TestMain(m *testing.M) {
 	// Set log level
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 
 	// Start test servers
-	testServer = NewTestServer(HTTPPort, HTTPSPort)
+	testServer = NewTestServer(HTTPPort, HTTPSPort, WebSocketPort, WebSocketSSLPort)
 	if err := testServer.Start(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to start test servers")
 	}
@@ -1333,4 +1339,112 @@ func TestStream(t *testing.T) {
 			})
 		})
 	})
+}
+
+// TestWebsocket tests WebSocket proxy functionality for both HTTP and HTTPS
+func TestWebsocket(t *testing.T) {
+	t.Run("HTTP", func(t *testing.T) {
+		testWebSocketHTTP(t)
+	})
+
+	t.Run("HTTPS", func(t *testing.T) {
+		testWebSocketHTTPS(t)
+	})
+}
+
+// testWebSocketHTTP tests WebSocket over HTTP (ws://)
+func testWebSocketHTTP(t *testing.T) {
+	// Configure a websocket dialer to use the masktunnel proxy
+	proxyURL, err := url.Parse("http://localhost:" + ProxyPort)
+	if err != nil {
+		t.Fatalf("Failed to parse proxy URL: %v", err)
+	}
+
+	dialer := &websocket.Dialer{
+		Proxy: func(req *fhttp.Request) (*url.URL, error) {
+			return proxyURL, nil
+		},
+		HandshakeTimeout: 10 * time.Second,
+	}
+
+	// Dial using ws:// protocol
+	wsURL := "ws://localhost:" + WebSocketPort + "/ws"
+	header := fhttp.Header{}
+	header.Set("User-Agent", UserAgents["Chrome"])
+
+	conn, resp, err := dialer.Dial(wsURL, header, nil)
+	if err != nil {
+		t.Fatalf("HTTP WebSocket dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	if resp.StatusCode != fhttp.StatusSwitchingProtocols {
+		t.Errorf("Expected status 101, got: %d", resp.StatusCode)
+	}
+
+	message := []byte("hello HTTP websocket")
+	if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	_, p, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read message: %v", err)
+	}
+
+	if string(p) != string(message) {
+		t.Errorf("Expected message '%s', got: '%s'", message, p)
+	}
+
+	t.Log("HTTP WebSocket proxy test passed")
+}
+
+// testWebSocketHTTPS tests WebSocket over HTTPS (wss://)
+func testWebSocketHTTPS(t *testing.T) {
+	// Configure a websocket dialer to use the masktunnel proxy
+	proxyURL, err := url.Parse("http://localhost:" + ProxyPort)
+	if err != nil {
+		t.Fatalf("Failed to parse proxy URL: %v", err)
+	}
+
+	dialer := &websocket.Dialer{
+		Proxy: func(req *fhttp.Request) (*url.URL, error) {
+			return proxyURL, nil
+		},
+		HandshakeTimeout: 10 * time.Second,
+		TLSClientConfig: &utls.Config{
+			InsecureSkipVerify: true, // Skip certificate verification for test
+		},
+	}
+
+	// Dial using wss:// protocol
+	wssURL := "wss://localhost:" + WebSocketSSLPort + "/ws"
+	header := fhttp.Header{}
+	header.Set("User-Agent", UserAgents["Firefox"])
+
+	conn, resp, err := dialer.Dial(wssURL, header, nil)
+	if err != nil {
+		t.Fatalf("HTTPS WebSocket dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	if resp.StatusCode != fhttp.StatusSwitchingProtocols {
+		t.Errorf("Expected status 101, got: %d", resp.StatusCode)
+	}
+
+	message := []byte("hello HTTPS websocket")
+	if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+		t.Fatalf("Failed to write message: %v", err)
+	}
+
+	_, p, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("Failed to read message: %v", err)
+	}
+
+	if string(p) != string(message) {
+		t.Errorf("Expected message '%s', got: '%s'", message, p)
+	}
+
+	t.Log("HTTPS WebSocket proxy test passed")
 }

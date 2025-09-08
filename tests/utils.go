@@ -17,22 +17,29 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 )
 
 // TestServer holds test server instances
 type TestServer struct {
-	HTTPServer  *http.Server
-	HTTPSServer *http.Server
-	HTTPPort    string
-	HTTPSPort   string
+	HTTPServer         *http.Server
+	HTTPSServer        *http.Server
+	WebSocketServer    *http.Server // HTTP WebSocket server
+	WebSocketSSLServer *http.Server // HTTPS WebSocket server
+	HTTPPort           string
+	HTTPSPort          string
+	WebSocketPort      string
+	WebSocketSSLPort   string
 }
 
 // NewTestServer creates test servers for HTTP, HTTPS, and WebSocket
-func NewTestServer(httpPort, httpsPort string) *TestServer {
+func NewTestServer(httpPort, httpsPort, wsPort, wssPort string) *TestServer {
 	return &TestServer{
-		HTTPPort:  httpPort,
-		HTTPSPort: httpsPort,
+		HTTPPort:         httpPort,
+		HTTPSPort:        httpsPort,
+		WebSocketPort:    wsPort,
+		WebSocketSSLPort: wssPort,
 	}
 }
 
@@ -80,6 +87,25 @@ func (ts *TestServer) Start() error {
 		},
 	}
 
+	// WebSocket HTTP server
+	wsMux := http.NewServeMux()
+	wsMux.HandleFunc("/ws", ts.handleWebSocket)
+	ts.WebSocketServer = &http.Server{
+		Addr:    ":" + ts.WebSocketPort,
+		Handler: wsMux,
+	}
+
+	// WebSocket HTTPS server
+	wssMux := http.NewServeMux()
+	wssMux.HandleFunc("/ws", ts.handleWebSocket)
+	ts.WebSocketSSLServer = &http.Server{
+		Addr:    ":" + ts.WebSocketSSLPort,
+		Handler: wssMux,
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		},
+	}
+
 	// Start servers in background
 	go func() {
 		if err := ts.HTTPServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -93,9 +119,21 @@ func (ts *TestServer) Start() error {
 		}
 	}()
 
+	go func() {
+		if err := ts.WebSocketServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("WebSocket HTTP test server error")
+		}
+	}()
+
+	go func() {
+		if err := ts.WebSocketSSLServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("WebSocket HTTPS test server error")
+		}
+	}()
+
 	// Wait for servers to start
 	time.Sleep(time.Second)
-	log.Info().Str("http", ts.HTTPPort).Str("https", ts.HTTPSPort).Msg("Test servers started")
+	log.Info().Str("http", ts.HTTPPort).Str("https", ts.HTTPSPort).Str("ws", ts.WebSocketPort).Str("wss", ts.WebSocketSSLPort).Msg("Test servers started")
 	return nil
 }
 
@@ -106,6 +144,12 @@ func (ts *TestServer) Stop() {
 	}
 	if ts.HTTPSServer != nil {
 		ts.HTTPSServer.Close()
+	}
+	if ts.WebSocketServer != nil {
+		ts.WebSocketServer.Close()
+	}
+	if ts.WebSocketSSLServer != nil {
+		ts.WebSocketSSLServer.Close()
 	}
 	log.Info().Msg("Test servers stopped")
 }
@@ -282,7 +326,7 @@ func (ts *TestServer) handleStreamClose(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Raw HTTP/1.1 response with Connection: close, no Content-Length
-	resp := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n")
+	resp := "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n"
 	if _, err := buf.WriteString(resp); err != nil {
 		return
 	}
@@ -377,6 +421,40 @@ func (ts *TestServer) generateSelfSignedCert() (tls.Certificate, error) {
 	}
 
 	return cert, nil
+}
+
+// WebSocket echo handler using gorilla/websocket
+var gorillaUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all connections
+	},
+}
+
+func (ts *TestServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := gorillaUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Error().Err(err).Msg("WebSocket upgrade failed")
+		return
+	}
+	defer conn.Close()
+
+	log.Info().Msg("WebSocket client connected")
+
+	for {
+		messageType, p, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Error().Err(err).Msg("WebSocket read error")
+			}
+			break
+		}
+		log.Info().Str("message", string(p)).Msg("WebSocket message received")
+
+		if err := conn.WriteMessage(messageType, p); err != nil {
+			log.Error().Err(err).Msg("WebSocket write error")
+			break
+		}
+	}
 }
 
 // UserAgents for testing different browser fingerprints with distinct versions

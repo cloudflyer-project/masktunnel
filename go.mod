@@ -6,18 +6,20 @@ toolchain go1.24.4
 
 require (
 	github.com/Noooste/azuretls-client v1.12.3
+	github.com/Noooste/fhttp v1.0.15
+	github.com/Noooste/utls v1.3.19
+	github.com/Noooste/websocket v1.0.3
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cristalhq/base64 v0.1.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/mileusna/useragent v1.3.4
 	github.com/rs/zerolog v1.34.0
+	github.com/valyala/fasthttp v1.65.0
 )
 
 require (
-	github.com/Noooste/fhttp v1.0.15 // indirect
 	github.com/Noooste/go-socks4 v0.0.2 // indirect
 	github.com/Noooste/uquic-go v0.0.31 // indirect
-	github.com/Noooste/utls v1.3.19 // indirect
-	github.com/Noooste/websocket v1.0.3 // indirect
 	github.com/bdandy/go-errors v1.2.2 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
@@ -30,6 +32,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/refraction-networking/utls v1.7.3 // indirect
+	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.uber.org/mock v0.5.2 // indirect
 	golang.org/x/crypto v0.41.0 // indirect

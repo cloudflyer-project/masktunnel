@@ -74,6 +74,7 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ServerName:   hostname,
+		NextProtos:   []string{"h2", "http/1.1"}, // Support both HTTP/2 and HTTP/1.1
 	}
 
 	// Wrap client connection with TLS
@@ -86,7 +87,17 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 		return
 	}
 
-	log.Debug().Str("hostname", hostname).Msg("Client TLS handshake completed")
+	// Log negotiated protocol
+	state := clientTLSConn.ConnectionState()
+	negotiatedProto := state.NegotiatedProtocol
+	if negotiatedProto == "" {
+		negotiatedProto = "http/1.1" // Default if no ALPN
+	}
+
+	log.Debug().
+		Str("hostname", hostname).
+		Str("negotiated_protocol", negotiatedProto).
+		Msg("Client TLS handshake completed")
 
 	// Handle HTTP requests over the TLS connection
 	s.handleTLSConnection(clientTLSConn, target)

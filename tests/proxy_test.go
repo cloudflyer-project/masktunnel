@@ -39,7 +39,7 @@ var (
 // TestMain sets up the test environment
 func TestMain(m *testing.M) {
 	// Set log level
-	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
 	// Start test servers
 	testServer = NewTestServer(HTTPPort, HTTPSPort, WebSocketPort, WebSocketSSLPort)
@@ -50,7 +50,7 @@ func TestMain(m *testing.M) {
 	// Start proxy server
 	config := &masktunnel.Config{
 		Port:    ProxyPort,
-		Verbose: false,
+		Verbose: 0,
 	}
 	proxyServer = masktunnel.NewServer(config)
 	go func() {
@@ -63,7 +63,7 @@ func TestMain(m *testing.M) {
 	payloadConfig := &masktunnel.Config{
 		Port:    InjectionProxyPort,
 		Payload: "window.__masktunnel_injected = true; console.log('MaskTunnel payload injected');",
-		Verbose: false,
+		Verbose: 0,
 	}
 	proxyServerWithPayload = masktunnel.NewServer(payloadConfig)
 	go func() {

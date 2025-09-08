@@ -14,6 +14,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/mileusna/useragent v1.3.4
 	github.com/rs/zerolog v1.34.0
+	github.com/spf13/pflag v1.0.10
 	github.com/valyala/fasthttp v1.65.0
 )
 

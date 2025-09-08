@@ -11,5 +11,5 @@ type Config struct {
 	Password      string
 	CertFile      string
 	KeyFile       string
-	Verbose       bool
+	Verbose       int
 }

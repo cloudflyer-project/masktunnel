@@ -86,15 +86,15 @@ The fingerprints returned should be different for each browser.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-port` | Proxy listen port | `8080` |
-| `-addr` | Proxy listen address | `` |
-| `-username` | Username for proxy authentication | `` |
-| `-password` | Password for proxy authentication | `` |
-| `-payload` | JavaScript to inject into responses | `` |
-| `-upstream-proxy` | Forward requests to upstream proxy | `` |
-| `-user-agent` | Override User-Agent header | `` |
+| `-addr` | Proxy listen address | |
+| `-username` | Username for proxy authentication | |
+| `-password` | Password for proxy authentication | |
+| `-payload` | JavaScript to inject into responses | |
+| `-upstream-proxy` | Forward requests to upstream proxy | |
+| `-user-agent` | Override User-Agent header | |
 | `-cert` | TLS certificate file | `cert.pem` |
 | `-key` | TLS key file | `key.pem` |
-| `-verbose` | Enable verbose logging | `false` |
+| `-verbose` | Enable verbose logging | `0` |
 
 ## Acknowledgments
 

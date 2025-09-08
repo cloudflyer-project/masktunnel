@@ -12,6 +12,7 @@ MaskTunnel is an HTTP proxy that automatically changes its "fingerprint" to matc
 - **Dynamic adaptation**: Automatically selects correct fingerprints based on User-Agent headers
 - **JavaScript injection**: Inject custom code to bypass client-side detection
 - **Zero configuration**: Works out-of-the-box with any HTTP client or browser
+- **Supports streaming**: Support chunked and websocket connections
 
 ## Installation
 
@@ -24,14 +25,12 @@ docker run -p 8080:8080 jackzzs/masktunnel
 
 ### Binary Releases
 
-Download pre-built binaries from the [releases page](../../releases).
+Download pre-built binaries from the [releases page](https://github.com/cloudflyer-project/masktunnel/releases).
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/cloudflyer-project/masktunnel
-cd masktunnel
-go build ./cmd/masktunnel
+go run github.com/cloudflyer-project/masktunnel/cmd/masktunnel
 ```
 
 ## Usage

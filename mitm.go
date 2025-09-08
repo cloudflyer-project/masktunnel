@@ -99,49 +99,69 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 		Msg("Client TLS handshake completed")
 
 	// Handle HTTP requests over the TLS connection
-	s.handleTLSConnection(clientTLSConn, target)
+	s.serveMITMOnTLS(clientTLSConn, target)
 }
 
-// handleTLSConnection handles HTTP requests over established TLS connection
-func (s *Server) handleTLSConnection(clientTLSConn *tls.Conn, target string) {
+// serveMITMOnTLS handles HTTP requests over an established TLS connection using a fasthttp server
+// with a larger read buffer to prevent errors with large headers.
+func (s *Server) serveMITMOnTLS(clientTLSConn net.Conn, target string) {
 	log.Debug().Str("target", target).Msg("Starting HTTP handler for TLS connection")
 
-	reader := bufio.NewReader(clientTLSConn)
-	var req fasthttp.Request
-
-	for {
-		if err := req.Read(reader); err != nil {
-			if err != io.EOF && !strings.Contains(err.Error(), "use of closed network connection") && err != fasthttp.ErrTimeout {
-				log.Error().Err(err).Msg("Failed to read HTTP request")
+	server := &fasthttp.Server{
+		Handler: func(ctx *fasthttp.RequestCtx) {
+			ua := string(ctx.Request.Header.Peek("User-Agent"))
+			sess, err := s.sessionManager.GetSession(ua, s.config.UpstreamProxy)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to get azuretls session")
+				ctx.Error("Failed to get session", fasthttp.StatusInternalServerError)
+				return
 			}
-			break
-		}
 
-		ua := string(req.Header.Peek("User-Agent"))
-		sess, err := s.sessionManager.GetSession(ua, s.config.UpstreamProxy)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to get azuretls session")
-			break
-		}
-
-		resp, streamed, err := s.processMITMRequest(&req, sess, target, clientTLSConn)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to process MITM request")
-			break
-		}
-
-		if !streamed {
-			if err := resp.Write(clientTLSConn); err != nil {
-				log.Error().Err(err).Msg("Failed to write response")
-				break
+			resp, streamed, err := s.processMITMRequest(&ctx.Request, sess, target, clientTLSConn)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to process MITM request")
+				// The connection might be already closed, so we can't reliably write an error.
+				// The server will log the connection error.
+				return
 			}
-		}
 
-		if req.Header.ConnectionClose() {
-			break
-		}
+			if streamed {
+				// The connection has been taken over for WebSocket or another streaming protocol.
+				// We must tell the fasthttp server to release control of it.
+				ctx.Hijack(func(c net.Conn) {
+					// Do nothing, as the connection is now managed by goroutines
+					// started within processMITMRequest.
+				})
+				return
+			}
 
-		req.Reset()
+			if resp != nil {
+				defer resp.Body.Close()
+
+				ctx.Response.SetStatusCode(resp.StatusCode)
+				for key, values := range resp.Header {
+					for _, value := range values {
+						ctx.Response.Header.Add(key, value)
+					}
+				}
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to read response body")
+					ctx.Error("Failed to read response body", fasthttp.StatusInternalServerError)
+					return
+				}
+				ctx.Response.SetBody(body)
+			}
+		},
+		ReadBufferSize: 16384,
+		Name:           "masktunnel-mitm",
+	}
+
+	if err := server.ServeConn(clientTLSConn); err != nil {
+		if err != fasthttp.ErrConnectionClosed && !strings.Contains(err.Error(), "use of closed network connection") && !strings.Contains(err.Error(), "timeout") {
+			log.Error().Err(err).Str("target", target).Msg("Error serving MITM connection")
+		}
 	}
 
 	log.Debug().Str("target", target).Msg("Closed TLS connection")

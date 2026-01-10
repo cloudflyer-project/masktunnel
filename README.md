@@ -2,6 +2,8 @@
 
 A smart proxy that automatically mimics different browsers to bypass detection systems.
 
+[中文文档 / Chinese README](README_zh.md)
+
 ## What is MaskTunnel?
 
 MaskTunnel is an HTTP proxy that automatically changes its "fingerprint" to match different browsers (Chrome, Firefox, Safari, etc.) based on the User-Agent header in requests. This helps bypass websites that try to detect and block automated traffic.

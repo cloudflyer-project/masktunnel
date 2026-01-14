@@ -77,6 +77,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle internal control API (must be checked before CONNECT)
+	if r.Method == "POST" && r.URL.Path == "/__masktunnel__/reset" {
+		s.handleResetSessions(w, r)
+		return
+	}
+
+	if r.Method == "POST" && r.URL.Path == "/__masktunnel__/proxy" {
+		s.handleSetProxy(w, r)
+		return
+	}
+
 	// Handle CONNECT method (HTTPS tunneling)
 	if r.Method == "CONNECT" {
 		s.handleConnect(w, r)
@@ -91,6 +102,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Handle regular HTTP requests
 	s.handleHTTP(w, r)
+}
+
+// handleResetSessions handles the internal API to reset all TLS sessions
+func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
+	count := s.sessionManager.GetSessionCount()
+	s.sessionManager.CloseAll()
+	log.Info().Int("closed_sessions", count).Msg("Reset all TLS sessions via API")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fmt.Sprintf(`{"success":true,"closed_sessions":%d}`, count)))
+}
+
+// handleSetProxy handles the internal API to set upstream proxy
+func (s *Server) handleSetProxy(w http.ResponseWriter, r *http.Request) {
+	// Read proxy URL from request body
+	body := make([]byte, 1024)
+	n, _ := r.Body.Read(body)
+	proxyURL := strings.TrimSpace(string(body[:n]))
+
+	// Update config
+	oldProxy := s.config.UpstreamProxy
+	s.config.UpstreamProxy = proxyURL
+
+	// Close all existing sessions to force new connections with new proxy
+	count := s.sessionManager.GetSessionCount()
+	s.sessionManager.CloseAll()
+
+	log.Info().
+		Str("old_proxy", oldProxy).
+		Str("new_proxy", proxyURL).
+		Int("closed_sessions", count).
+		Msg("Updated upstream proxy via API")
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fmt.Sprintf(`{"success":true,"proxy":"%s","closed_sessions":%d}`, proxyURL, count)))
 }
 
 // sendAuthRequired sends 407 Proxy Authentication Required response

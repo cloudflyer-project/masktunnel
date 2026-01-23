@@ -1039,7 +1039,8 @@ func TestRedirectTargetAccess(t *testing.T) {
 
 // TestHTTPSConnect tests HTTPS CONNECT tunnel functionality
 func TestHTTPSConnect(t *testing.T) {
-	target := "httpbin.org:443"
+	// Use local HTTPS test server as CONNECT target to keep tests fully offline.
+	target := "localhost:" + HTTPSPort
 
 	// Establish CONNECT tunnel
 	conn, err := CreateTCPConnection(ProxyPort, target)
@@ -1051,7 +1052,7 @@ func TestHTTPSConnect(t *testing.T) {
 	// Wrap with TLS
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
-		ServerName:         "httpbin.org",
+		ServerName:         "localhost",
 	}
 
 	tlsConn := tls.Client(conn, tlsConfig)
@@ -1061,8 +1062,8 @@ func TestHTTPSConnect(t *testing.T) {
 		t.Fatalf("TLS handshake failed: %v", err)
 	}
 
-	// Test with external HTTPS service through CONNECT tunnel
-	request := fmt.Sprintf("GET /get HTTP/1.1\r\nHost: httpbin.org\r\nUser-Agent: %s\r\nConnection: close\r\n\r\n",
+	// Test HTTPS request through CONNECT tunnel
+	request := fmt.Sprintf("GET / HTTP/1.1\r\nHost: localhost\r\nUser-Agent: %s\r\nConnection: close\r\n\r\n",
 		UserAgents["Chrome"])
 
 	if _, err := tlsConn.Write([]byte(request)); err != nil {

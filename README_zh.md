@@ -1,3 +1,5 @@
+[![GitHub Stars](https://img.shields.io/github/stars/cloudflyer-project/masktunnel?style=flat&logo=github)](https://github.com/cloudflyer-project/masktunnel) [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/cloudflyer-project/masktunnel/test.yml?logo=github&label=Tests)](https://github.com/cloudflyer-project/masktunnel/actions) ![Python Version](https://img.shields.io/badge/python_version-%3E%203.9-blue?logo=python&logoColor=white) [![PyPI - Version](https://img.shields.io/pypi/v/masktunnel?logo=pypi&logoColor=white)](https://pypi.org/project/masktunnel/) ![Go Version](https://img.shields.io/github/go-mod/go-version/cloudflyer-project/masktunnel) ![License](https://img.shields.io/github/license/cloudflyer-project/masktunnel)
+
 # MaskTunnel
 
 一个智能代理，自动模拟不同浏览器的指纹以绑过检测系统。
@@ -26,6 +28,14 @@ docker run -p 8080:8080 jackzzs/masktunnel
 ### 预编译二进制文件
 
 从 [Releases 页面](https://github.com/cloudflyer-project/masktunnel/releases) 下载预编译的二进制文件。
+
+### Python 版本
+
+```bash
+pip install masktunnel
+```
+
+> Python 版本是 Go 实现的封装。详见 [Python 绑定](#python-绑定)。
 
 ### 从源码构建
 

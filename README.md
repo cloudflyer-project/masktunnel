@@ -1,3 +1,5 @@
+[![GitHub Stars](https://img.shields.io/github/stars/cloudflyer-project/masktunnel?style=flat&logo=github)](https://github.com/cloudflyer-project/masktunnel) [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/cloudflyer-project/masktunnel/test.yml?logo=github&label=Tests)](https://github.com/cloudflyer-project/masktunnel/actions) ![Python Version](https://img.shields.io/badge/python_version-%3E%203.9-blue?logo=python&logoColor=white) [![PyPI - Version](https://img.shields.io/pypi/v/masktunnel?logo=pypi&logoColor=white)](https://pypi.org/project/masktunnel/) ![Go Version](https://img.shields.io/github/go-mod/go-version/cloudflyer-project/masktunnel) ![License](https://img.shields.io/github/license/cloudflyer-project/masktunnel)
+
 # MaskTunnel
 
 A smart proxy that automatically mimics different browsers to bypass detection systems.
@@ -28,6 +30,14 @@ docker run -p 8080:8080 jackzzs/masktunnel
 ### Binary Releases
 
 Download pre-built binaries from the [releases page](https://github.com/cloudflyer-project/masktunnel/releases).
+
+### Python Version
+
+```bash
+pip install masktunnel
+```
+
+> The Python version is a wrapper of the Go implementation. See [Python Bindings](#python-bindings) for usage.
 
 ### Build from Source
 

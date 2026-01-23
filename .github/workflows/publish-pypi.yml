@@ -1,0 +1,101 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-to-pypi:
+    name: Publish Python Package to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/masktunnel
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Checkout code (for tag context)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag commit
+        id: tag_commit
+        run: |
+          echo "sha=$(git rev-list -n 1 ${{ github.event.release.tag_name }})" >> $GITHUB_OUTPUT
+
+      - name: Download combined Linux x64 wheels
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: python-tests.yml
+          workflow_conclusion: success
+          commit: ${{ steps.tag_commit.outputs.sha }}
+          name: wheels-linux-x64
+          path: dist/
+          check_artifacts: false
+          if_no_artifact_found: ignore
+
+      - name: Download Windows wheels
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: python-tests.yml
+          workflow_conclusion: success
+          commit: ${{ steps.tag_commit.outputs.sha }}
+          name: wheels-windows-amd64
+          path: dist/
+          check_artifacts: false
+          if_no_artifact_found: ignore
+
+      - name: Download macOS x64 wheels
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: python-tests.yml
+          workflow_conclusion: success
+          commit: ${{ steps.tag_commit.outputs.sha }}
+          name: wheels-macos-x64
+          path: dist/
+          check_artifacts: false
+          if_no_artifact_found: ignore
+
+      - name: Download macOS arm64 wheels
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: python-tests.yml
+          workflow_conclusion: success
+          commit: ${{ steps.tag_commit.outputs.sha }}
+          name: wheels-macos-arm64
+          path: dist/
+          check_artifacts: false
+          if_no_artifact_found: ignore
+
+      - name: Download source distribution
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: python-tests.yml
+          workflow_conclusion: success
+          commit: ${{ steps.tag_commit.outputs.sha }}
+          name: source-dist
+          path: dist/
+          check_artifacts: true
+          if_no_artifact_found: error
+
+      - name: List distributions
+        run: |
+          echo "=== Distribution files ==="
+          ls -la dist/
+          echo "=== Wheel files ==="
+          find dist/ -name "*.whl" -exec ls -la {} \;
+          echo "=== Source distribution ==="
+          find dist/ -name "*.tar.gz" -exec ls -la {} \;
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          verify-metadata: true
+          verbose: true
+          skip-existing: true

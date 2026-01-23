@@ -35,6 +35,8 @@ if "-buildvcs=false" not in current_goflags:
 install_requires = [
     "setuptools>=40.0",
     "click>=8.0",
+    "loguru",
+    "rich",
 ]
 
 extras_require = {

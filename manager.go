@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/Noooste/azuretls-client"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -12,12 +13,22 @@ import (
 type Manager struct {
 	sessions map[string]*azuretls.Session
 	mu       sync.RWMutex
+	logger   zerolog.Logger
 }
 
 // NewManager creates a new session manager
 func NewManager() *Manager {
 	return &Manager{
 		sessions: make(map[string]*azuretls.Session),
+		logger:   log.Logger,
+	}
+}
+
+// NewManagerWithLogger creates a new session manager with custom logger
+func NewManagerWithLogger(logger zerolog.Logger) *Manager {
+	return &Manager{
+		sessions: make(map[string]*azuretls.Session),
+		logger:   logger,
 	}
 }
 
@@ -55,7 +66,7 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 	// Parse browser fingerprint
 	browserFingerprint, err := GetBrowserFingerprint(userAgent)
 	if err != nil {
-		log.Debug().Err(err).Msg("Failed to parse User-Agent, using default Chrome")
+		m.logger.Debug().Err(err).Msg("Failed to parse User-Agent, using default Chrome")
 		// Use default Chrome fingerprint
 		browserFingerprint = &BrowserFingerprint{
 			Browser:          "Chrome",
@@ -65,7 +76,7 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 	}
 
 	// Log session creation with structured logging
-	log.Debug().
+	m.logger.Debug().
 		Str("type", "session_creation").
 		Str("user_agent", userAgent).
 		Str("browser", browserFingerprint.Browser).
@@ -83,7 +94,7 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 		return nil, fmt.Errorf("failed to configure TLS fingerprint: %v", err)
 	}
 
-	log.Debug().Str("browser", browserFingerprint.Browser).Msg("TLS ClientHello configured")
+	m.logger.Debug().Str("browser", browserFingerprint.Browser).Msg("TLS ClientHello configured")
 
 	// Configure HTTP/2 fingerprint
 	err = session.ApplyHTTP2(browserFingerprint.HTTP2Fingerprint)
@@ -91,7 +102,7 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 		return nil, fmt.Errorf("failed to configure HTTP/2 fingerprint: %v", err)
 	}
 
-	log.Debug().Str("fingerprint", browserFingerprint.HTTP2Fingerprint).Msg("Applied HTTP/2 fingerprint successfully")
+	m.logger.Debug().Str("fingerprint", browserFingerprint.HTTP2Fingerprint).Msg("Applied HTTP/2 fingerprint successfully")
 
 	// Set User-Agent
 	session.UserAgent = userAgent
@@ -102,7 +113,7 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 		if err != nil {
 			return nil, fmt.Errorf("failed to set proxy: %v", err)
 		}
-		log.Debug().Str("proxy", upstreamProxy).Msg("Configured upstream proxy")
+		m.logger.Debug().Str("proxy", upstreamProxy).Msg("Configured upstream proxy")
 	}
 
 	// Disable auto decompression
@@ -141,7 +152,7 @@ func (m *Manager) configureTLSFingerprint(session *azuretls.Session, browser str
 		// Default to Chrome
 		session.Browser = azuretls.Chrome
 		session.GetClientHelloSpec = azuretls.GetLastChromeVersion
-		log.Debug().Str("browser", browser).Msg("Unknown browser, using default Chrome configuration")
+		m.logger.Debug().Str("browser", browser).Msg("Unknown browser, using default Chrome configuration")
 	}
 
 	return nil
@@ -157,7 +168,7 @@ func (m *Manager) CloseAll() {
 		delete(m.sessions, key)
 	}
 
-	log.Info().Msg("Closed all sessions")
+	m.logger.Info().Msg("Closed all sessions")
 }
 
 // GetSessionCount returns current session count

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+
+	"github.com/rs/zerolog"
 )
 
 // Python bindings: gopy-friendly API surface.
@@ -19,6 +21,7 @@ type ServerOption struct {
 	Username      string
 	Password      string
 	Verbose       int
+	logger        *zerolog.Logger // internal, set via WithLogger
 }
 
 // DefaultServerOption returns default options.
@@ -27,6 +30,11 @@ func DefaultServerOption() *ServerOption {
 		Port:    "8080",
 		Verbose: 0,
 	}
+}
+
+// WithLogger sets a custom logger for the server.
+func (opt *ServerOption) WithLogger(logger zerolog.Logger) {
+	opt.logger = &logger
 }
 
 // ServerHandle wraps *Server for Python.
@@ -49,6 +57,7 @@ func NewServerHandle(opt *ServerOption) *ServerHandle {
 		Username:      opt.Username,
 		Password:      opt.Password,
 		Verbose:       opt.Verbose,
+		Logger:        opt.logger,
 	}
 	return &ServerHandle{s: NewServer(cfg)}
 }

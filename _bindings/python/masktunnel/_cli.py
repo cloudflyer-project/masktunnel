@@ -4,25 +4,17 @@ Command-line interface for masktunnel.
 This module provides CLI commands for the masktunnel proxy tool.
 """
 
-import asyncio
 import logging
 import platform
+import signal
 import sys
-from typing import Optional
+import threading
 
 import click
+from loguru import logger
 
-from ._utils import _logger
-
-
-def init_logging(level: int = logging.INFO) -> None:
-    """Initialize logging configuration."""
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    _logger.setLevel(level)
+from ._logging_config import init_logging
+from ._utils import _stop_log_listener
 
 
 @click.group()
@@ -66,49 +58,59 @@ def server(
     """Start MaskTunnel proxy server."""
     from ._server import Server, ServerOptions
 
-    async def main():
-        # Setup logging
-        if verbose == 0:
-            log_level = logging.WARNING
-        elif verbose == 1:
-            log_level = logging.INFO
-        else:
-            log_level = logging.DEBUG
-        
-        init_logging(level=log_level)
+    # Setup logging
+    if verbose == 0:
+        log_level = logging.WARNING
+    elif verbose == 1:
+        log_level = logging.INFO
+    else:
+        log_level = logging.DEBUG
+    
+    init_logging(level=log_level)
 
-        options = ServerOptions(
-            addr=addr,
-            port=port,
-            username=username,
-            password=password,
-            payload=payload,
-            upstream_proxy=upstream_proxy,
-            user_agent=user_agent,
-            verbose=verbose,
-        )
+    options = ServerOptions(
+        addr=addr,
+        port=port,
+        username=username,
+        password=password,
+        payload=payload,
+        upstream_proxy=upstream_proxy,
+        user_agent=user_agent,
+        verbose=verbose,
+    )
 
-        srv = Server(options=options)
-        
-        click.echo(f"MaskTunnel proxy server running on {srv.addr}")
-        click.echo("Press Ctrl+C to stop")
+    srv = Server(options=options)
+    
+    logger.info(f"MaskTunnel proxy server running on {srv.addr}")
+    logger.info("Press Ctrl+C to stop")
 
-        # Start server in background thread
-        await srv.async_start()
+    # Use threading.Event for clean shutdown
+    stop_event = threading.Event()
 
-        try:
-            # Wait forever until interrupted
-            await asyncio.Future()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            click.echo("\nShutting down...")
-            await srv.async_stop()
+    def signal_handler(signum, frame):
+        logger.info("Shutting down...")
+        stop_event.set()
+        srv.stop()
+        _stop_log_listener()
 
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Start server in background thread
+    server_thread = threading.Thread(target=srv.start, daemon=True)
+    server_thread.start()
+
+    # Wait for stop signal
     try:
-        asyncio.run(main())
+        stop_event.wait()
     except KeyboardInterrupt:
-        click.echo("\nShutting down...")
+        logger.info("Shutting down...")
+        srv.stop()
+        _stop_log_listener()
+
+    # Wait for server thread to finish
+    server_thread.join(timeout=5.0)
 
 
 @click.command()
@@ -119,6 +121,8 @@ def get_ca(port: str, addr: str, output: str):
     """Get the CA certificate from a running server or generate a new one."""
     from ._server import Server, ServerOptions
 
+    init_logging(level=logging.WARNING)
+
     options = ServerOptions(addr=addr, port=port)
     srv = Server(options=options)
     
@@ -128,9 +132,9 @@ def get_ca(port: str, addr: str, output: str):
     if ca_pem:
         with open(output, "wb") as f:
             f.write(ca_pem)
-        click.echo(f"CA certificate saved to {output}")
+        logger.info(f"CA certificate saved to {output}")
     else:
-        click.echo("Failed to get CA certificate", err=True)
+        logger.error("Failed to get CA certificate")
         sys.exit(1)
 
 

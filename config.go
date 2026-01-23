@@ -1,5 +1,7 @@
 package masktunnel
 
+import "github.com/rs/zerolog"
+
 // Config holds the proxy server configuration
 type Config struct {
 	Addr          string
@@ -12,4 +14,5 @@ type Config struct {
 	CertFile      string
 	KeyFile       string
 	Verbose       int
+	Logger        *zerolog.Logger // Custom logger for Python bindings
 }

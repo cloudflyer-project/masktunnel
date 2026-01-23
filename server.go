@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -20,22 +21,32 @@ type Server struct {
 	auth            *BasicAuth
 	certManager     *CertManager
 	httpServer      *http.Server
+	logger          zerolog.Logger
 }
 
 // NewServer creates a new proxy server instance
 func NewServer(config *Config) *Server {
+	// Use custom logger if provided, otherwise use global logger
+	var logger zerolog.Logger
+	if config.Logger != nil {
+		logger = *config.Logger
+	} else {
+		logger = log.Logger
+	}
+
 	certManager, err := NewCertManager()
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create certificate manager")
+		logger.Fatal().Err(err).Msg("Failed to create certificate manager")
 		return nil
 	}
 
 	return &Server{
 		config:          config,
-		sessionManager:  NewManager(),
+		sessionManager:  NewManagerWithLogger(logger),
 		payloadInjector: NewPayloadInjector(config.Payload),
 		auth:            NewBasicAuth(config.Username, config.Password),
 		certManager:     certManager,
+		logger:          logger,
 	}
 }
 
@@ -108,7 +119,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
 	count := s.sessionManager.GetSessionCount()
 	s.sessionManager.CloseAll()
-	log.Info().Int("closed_sessions", count).Msg("Reset all TLS sessions via API")
+	s.logger.Info().Int("closed_sessions", count).Msg("Reset all TLS sessions via API")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(fmt.Sprintf(`{"success":true,"closed_sessions":%d}`, count)))
@@ -129,7 +140,7 @@ func (s *Server) handleSetProxy(w http.ResponseWriter, r *http.Request) {
 	count := s.sessionManager.GetSessionCount()
 	s.sessionManager.CloseAll()
 
-	log.Info().
+	s.logger.Info().
 		Str("old_proxy", oldProxy).
 		Str("new_proxy", proxyURL).
 		Int("closed_sessions", count).
@@ -158,7 +169,7 @@ func (s *Server) sendAuthRequired(w http.ResponseWriter) {
 // handleConnect handles CONNECT method with MITM capability
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// Log simple CONNECT request
-	log.Debug().
+	s.logger.Debug().
 		Str("type", "connect").
 		Str("target", r.RequestURI).
 		Msg("CONNECT tunnel established")
@@ -175,7 +186,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to hijack connection")
+		s.logger.Error().Err(err).Msg("Failed to hijack connection")
 		return
 	}
 	defer clientConn.Close()
@@ -186,7 +197,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 // handleHTTP handles regular HTTP requests
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Info().
+	s.logger.Info().
 		Str("type", "http_request").
 		Str("method", r.Method).
 		Str("url", r.RequestURI).
@@ -212,7 +223,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := transport.RoundTrip(outReq)
 	if err != nil {
-		log.Error().Err(err).Msg("HTTP upstream request failed")
+		s.logger.Error().Err(err).Msg("HTTP upstream request failed")
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
@@ -229,7 +240,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			// Fallback for non-flushable writers, though rare for HTTP
 			if _, err := io.Copy(w, resp.Body); err != nil {
-				log.Error().Err(err).Msg("Error streaming HTTP response (fallback)")
+				s.logger.Error().Err(err).Msg("Error streaming HTTP response (fallback)")
 			}
 			return
 		}
@@ -243,7 +254,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-					log.Error().Err(writeErr).Msg("Error writing chunk to client")
+					s.logger.Error().Err(writeErr).Msg("Error writing chunk to client")
 					break
 				}
 				flusher.Flush() // Flush after each chunk is written
@@ -252,17 +263,17 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				break // End of stream
 			}
 			if err != nil {
-				log.Error().Err(err).Msg("Error reading from upstream response")
+				s.logger.Error().Err(err).Msg("Error reading from upstream response")
 				break
 			}
 		}
 		return
 	}
 
-	log.Debug().Str("content_type", contentType).Msg("Payload injection required for HTTP request, buffering response")
+	s.logger.Debug().Str("content_type", contentType).Msg("Payload injection required for HTTP request, buffering response")
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to read response body for injection")
+		s.logger.Error().Err(err).Msg("Failed to read response body for injection")
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
@@ -270,10 +281,10 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	contentEncoding := resp.Header.Get("Content-Encoding")
 	processedBody, _, err := injectWithReencode(s.payloadInjector, bodyBytes, contentType, contentEncoding)
 	if err != nil {
-		log.Error().Err(err).Str("content_encoding", contentEncoding).Msg("Failed to re-encode body, sending original.")
+		s.logger.Error().Err(err).Str("content_encoding", contentEncoding).Msg("Failed to re-encode body, sending original.")
 		processedBody = bodyBytes
 	} else {
-		log.Debug().Str("content_type", contentType).Msg("Payload injected into HTTP response")
+		s.logger.Debug().Str("content_type", contentType).Msg("Payload injected into HTTP response")
 	}
 
 	removeHopByHopHeaders(resp.Header)
@@ -282,7 +293,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(resp.StatusCode)
 	if _, err := w.Write(processedBody); err != nil {
-		log.Error().Err(err).Msg("Error writing injected HTTP response")
+		s.logger.Error().Err(err).Msg("Error writing injected HTTP response")
 	}
 }
 
@@ -339,7 +350,7 @@ func (s *Server) isWebSocketUpgrade(r *http.Request) bool {
 	hasConnection := strings.Contains(strings.ToLower(connection), "upgrade")
 	hasWSKey := wsKey != ""
 
-	log.Debug().
+	s.logger.Debug().
 		Str("upgrade", upgrade).
 		Str("connection", connection).
 		Str("ws_key", wsKey).
@@ -351,7 +362,7 @@ func (s *Server) isWebSocketUpgrade(r *http.Request) bool {
 
 // handleWebSocketUpgrade handles HTTP WebSocket upgrade requests by proxying them
 func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
-	log.Debug().
+	s.logger.Debug().
 		Str("type", "websocket_upgrade").
 		Str("url", r.RequestURI).
 		Msg("Handling HTTP WebSocket upgrade request")
@@ -379,14 +390,14 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 	// Make the upstream request
 	resp, err := transport.RoundTrip(outReq)
 	if err != nil {
-		log.Error().Err(err).Msg("WebSocket upstream request failed")
+		s.logger.Error().Err(err).Msg("WebSocket upstream request failed")
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
 
 	// Check if upstream accepted the WebSocket upgrade
 	if resp.StatusCode != http.StatusSwitchingProtocols {
-		log.Error().Int("status", resp.StatusCode).Msg("Upstream rejected WebSocket upgrade")
+		s.logger.Error().Int("status", resp.StatusCode).Msg("Upstream rejected WebSocket upgrade")
 		defer resp.Body.Close()
 
 		// Forward the rejection response
@@ -410,7 +421,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to hijack client connection")
+		s.logger.Error().Err(err).Msg("Failed to hijack client connection")
 		return
 	}
 	defer clientConn.Close()
@@ -418,12 +429,12 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 	// Get the upstream connection
 	upstreamConn, ok := resp.Body.(io.ReadWriteCloser)
 	if !ok {
-		log.Error().Msg("Upstream connection is not a ReadWriteCloser")
+		s.logger.Error().Msg("Upstream connection is not a ReadWriteCloser")
 		return
 	}
 	defer upstreamConn.Close()
 
-	log.Debug().Str("url", r.RequestURI).Msg("HTTP WebSocket tunnel established")
+	s.logger.Debug().Str("url", r.RequestURI).Msg("HTTP WebSocket tunnel established")
 
 	// Start bidirectional copying
 	go func() {

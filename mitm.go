@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Noooste/azuretls-client"
-	"github.com/rs/zerolog/log"
 	"github.com/valyala/fasthttp"
 )
 
@@ -27,7 +26,7 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 	}
 
 	// Log MITM setup with structured logging
-	log.Debug().
+	s.logger.Debug().
 		Str("type", "mitm_setup").
 		Str("target", target).
 		Str("hostname", hostname).
@@ -42,7 +41,7 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 	// Peek at the first few bytes to determine protocol
 	firstBytes, err := bufferedConn.Reader.Peek(10)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to peek at connection for protocol detection")
+		s.logger.Error().Err(err).Msg("Failed to peek at connection for protocol detection")
 		return
 	}
 
@@ -55,18 +54,18 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 		strings.HasPrefix(firstStr, "OPTIONS ")
 
 	if isHTTPRequest {
-		log.Debug().Str("target", target).Msg("Detected HTTP request, handling as plain HTTP")
+		s.logger.Debug().Str("target", target).Msg("Detected HTTP request, handling as plain HTTP")
 		s.handleHTTPConnection(bufferedConn, target)
 		return
 	}
 
 	// This is likely HTTPS, proceed with TLS
-	log.Debug().Str("target", target).Msg("Detected TLS, proceeding with HTTPS MITM")
+	s.logger.Debug().Str("target", target).Msg("Detected TLS, proceeding with HTTPS MITM")
 
 	// Load or generate certificate for the target hostname
 	cert, err := s.getCertificateForHost(hostname)
 	if err != nil {
-		log.Error().Err(err).Str("hostname", hostname).Msg("Failed to get certificate")
+		s.logger.Error().Err(err).Str("hostname", hostname).Msg("Failed to get certificate")
 		return
 	}
 
@@ -82,7 +81,7 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 
 	// Perform TLS handshake with client
 	if err := clientTLSConn.Handshake(); err != nil {
-		log.Error().Err(err).Str("hostname", hostname).Msg("Client TLS handshake failed")
+		s.logger.Error().Err(err).Str("hostname", hostname).Msg("Client TLS handshake failed")
 		return
 	}
 
@@ -93,7 +92,7 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 		negotiatedProto = "http/1.1" // Default if no ALPN
 	}
 
-	log.Debug().
+	s.logger.Debug().
 		Str("hostname", hostname).
 		Str("negotiated_protocol", negotiatedProto).
 		Msg("Client TLS handshake completed")
@@ -105,23 +104,22 @@ func (s *Server) handleMITM(clientConn net.Conn, target string) {
 // serveMITMOnTLS handles HTTP requests over an established TLS connection using a fasthttp server
 // with a larger read buffer to prevent errors with large headers.
 func (s *Server) serveMITMOnTLS(clientTLSConn net.Conn, target string) {
-	log.Debug().Str("target", target).Msg("Starting HTTP handler for TLS connection")
+	s.logger.Debug().Str("target", target).Msg("Starting HTTP handler for TLS connection")
 
 	server := &fasthttp.Server{
 		Handler: func(ctx *fasthttp.RequestCtx) {
 			ua := string(ctx.Request.Header.Peek("User-Agent"))
 			sess, err := s.sessionManager.GetSession(ua, s.config.UpstreamProxy)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to get azuretls session")
+				s.logger.Error().Err(err).Msg("Failed to get azuretls session")
 				ctx.Error("Failed to get session", fasthttp.StatusInternalServerError)
 				return
 			}
 
 			resp, streamed, err := s.processMITMRequest(&ctx.Request, sess, target, clientTLSConn)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to process MITM request")
-				// The connection might be already closed, so we can't reliably write an error.
-				// The server will log the connection error.
+				s.logger.Error().Err(err).Msg("Failed to process MITM request")
+				ctx.Error("Bad Gateway: "+err.Error(), fasthttp.StatusBadGateway)
 				return
 			}
 
@@ -147,7 +145,7 @@ func (s *Server) serveMITMOnTLS(clientTLSConn net.Conn, target string) {
 
 				body, err := io.ReadAll(resp.Body)
 				if err != nil {
-					log.Error().Err(err).Msg("Failed to read response body")
+					s.logger.Error().Err(err).Msg("Failed to read response body")
 					ctx.Error("Failed to read response body", fasthttp.StatusInternalServerError)
 					return
 				}
@@ -160,18 +158,18 @@ func (s *Server) serveMITMOnTLS(clientTLSConn net.Conn, target string) {
 
 	if err := server.ServeConn(clientTLSConn); err != nil {
 		if err != fasthttp.ErrConnectionClosed && !strings.Contains(err.Error(), "use of closed network connection") && !strings.Contains(err.Error(), "timeout") {
-			log.Error().Err(err).Str("target", target).Msg("Error serving MITM connection")
+			s.logger.Error().Err(err).Str("target", target).Msg("Error serving MITM connection")
 		}
 	}
 
-	log.Debug().Str("target", target).Msg("Closed TLS connection")
+	s.logger.Debug().Str("target", target).Msg("Closed TLS connection")
 }
 
 // processMITMRequest handles individual HTTP requests in MITM mode
 func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session, target string, clientConn net.Conn) (*http.Response, bool, error) {
 	// Check if this is a WebSocket upgrade request
 	if s.isWebSocketUpgradeRequest(r) {
-		log.Debug().Str("target", target).Msg("Detected WebSocket upgrade request in MITM")
+		s.logger.Debug().Str("target", target).Msg("Detected WebSocket upgrade request in MITM")
 		return s.handleWebSocketUpgradeInMITM(r, sess, target, clientConn)
 	}
 
@@ -182,7 +180,7 @@ func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session,
 	}
 
 	method := string(r.Header.Method())
-	logEvent := log.Info().
+	logEvent := s.logger.Info().
 		Str("method", method).
 		Str("url", fullURL).
 		Str("target", target)
@@ -220,7 +218,7 @@ func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session,
 
 	resp, err := sess.Do(azureReq)
 	if err != nil {
-		log.Error().Err(err).Msg("MITM request failed")
+		s.logger.Error().Err(err).Msg("MITM request failed")
 		return nil, false, err
 	}
 
@@ -258,29 +256,29 @@ func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session,
 
 		_ = bodyStream.Close()
 
-		log.Debug().Str("type", "mitm_response").Int("status", resp.StatusCode).Msg("Directly streamed MITM response")
+		s.logger.Debug().Str("type", "mitm_response").Int("status", resp.StatusCode).Msg("Directly streamed MITM response")
 		return nil, true, nil
 	}
 
 	defer bodyStream.Close()
 	bodyBytes, err := io.ReadAll(bodyStream)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to read response body for injection")
+		s.logger.Error().Err(err).Msg("Failed to read response body for injection")
 		return nil, false, err
 	}
 
 	contentEncoding := resp.Header.Get("Content-Encoding")
 	processedBody, _, err := injectWithReencode(s.payloadInjector, bodyBytes, contentType, contentEncoding)
 	if err != nil {
-		log.Error().Err(err).Str("content_encoding", contentEncoding).Msg("Failed to re-encode body, sending original.")
+		s.logger.Error().Err(err).Str("content_encoding", contentEncoding).Msg("Failed to re-encode body, sending original.")
 		processedBody = bodyBytes
 	} else {
-		log.Debug().Str("content_type", contentType).Msg("Payload injected and body re-encoded")
+		s.logger.Debug().Str("content_type", contentType).Msg("Payload injected and body re-encoded")
 	}
 
 	httpReq, err := http.NewRequest(method, fullURL, nil)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to create dummy http.Request for response context")
+		s.logger.Error().Err(err).Msg("Failed to create dummy http.Request for response context")
 		return nil, false, err
 	}
 
@@ -298,7 +296,7 @@ func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session,
 	httpResp.Header.Set("Content-Length", fmt.Sprintf("%d", len(processedBody)))
 	httpResp.Header.Del("Transfer-Encoding")
 
-	log.Debug().
+	s.logger.Debug().
 		Str("type", "mitm_response").
 		Int("status", resp.StatusCode).
 		Int("size", len(processedBody)).
@@ -368,7 +366,6 @@ func (cw *ChunkedWriter) Write(p []byte) (n int, err error) {
 // This is implicitly called by io.Copy when the source reader returns EOF.
 func (cw *ChunkedWriter) Close() error {
 	if cw.useChunked {
-		log.Debug().Msg("Writing final zero-length chunk to close stream.")
 		_, err := io.WriteString(cw.conn, "0\r\n\r\n")
 		return err
 	}
@@ -385,7 +382,7 @@ func (s *Server) isWebSocketUpgradeRequest(r *fasthttp.Request) bool {
 	hasConnection := strings.Contains(strings.ToLower(connection), "upgrade")
 	hasWSKey := wsKey != ""
 
-	log.Debug().
+	s.logger.Debug().
 		Str("upgrade", upgrade).
 		Str("connection", connection).
 		Str("ws_key", wsKey).
@@ -404,12 +401,12 @@ func (s *Server) handleWebSocketUpgradeInMITM(r *fasthttp.Request, sess *azuretl
 		fullURL += "?" + string(query)
 	}
 
-	log.Debug().Str("url", fullURL).Msg("Handling WebSocket upgrade in MITM")
+	s.logger.Debug().Str("url", fullURL).Msg("Handling WebSocket upgrade in MITM")
 
 	// Use azuretls WebSocket functionality
 	ws, err := sess.NewWebsocket(fullURL, 1024, 1024)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to create WebSocket connection")
+		s.logger.Error().Err(err).Msg("Failed to create WebSocket connection")
 		// Return error response
 		resp := &http.Response{
 			StatusCode: http.StatusBadGateway,
@@ -429,12 +426,12 @@ func (s *Server) handleWebSocketUpgradeInMITM(r *fasthttp.Request, sess *azuretl
 		"Sec-WebSocket-Accept: " + generateWebSocketAccept(string(r.Header.Peek("Sec-WebSocket-Key"))) + "\r\n\r\n"
 
 	if _, err := clientConn.Write([]byte(upgradeResponse)); err != nil {
-		log.Error().Err(err).Msg("Failed to write WebSocket upgrade response")
+		s.logger.Error().Err(err).Msg("Failed to write WebSocket upgrade response")
 		ws.Close()
 		return nil, true, err
 	}
 
-	log.Debug().Str("url", fullURL).Msg("WebSocket tunnel established in MITM")
+	s.logger.Debug().Str("url", fullURL).Msg("WebSocket tunnel established in MITM")
 
 	// Get the underlying TCP connection from azuretls WebSocket
 	wsConn := ws.UnderlyingConn()
@@ -475,7 +472,7 @@ func (bc *BufferedMITMConn) Read(p []byte) (int, error) {
 
 // handleHTTPConnection handles plain HTTP requests (including HTTP WebSocket)
 func (s *Server) handleHTTPConnection(clientConn *BufferedMITMConn, target string) {
-	log.Debug().Str("target", target).Msg("Starting HTTP handler for plain connection")
+	s.logger.Debug().Str("target", target).Msg("Starting HTTP handler for plain connection")
 
 	reader := clientConn.Reader
 	var req fasthttp.Request
@@ -483,20 +480,20 @@ func (s *Server) handleHTTPConnection(clientConn *BufferedMITMConn, target strin
 	for {
 		if err := req.Read(reader); err != nil {
 			if err != io.EOF && !strings.Contains(err.Error(), "use of closed network connection") && err != fasthttp.ErrTimeout {
-				log.Error().Err(err).Msg("Failed to read HTTP request")
+				s.logger.Error().Err(err).Msg("Failed to read HTTP request")
 			}
 			break
 		}
 
 		// Check if this is a WebSocket upgrade request
 		if s.isWebSocketUpgradeRequest(&req) {
-			log.Debug().Str("target", target).Msg("Detected HTTP WebSocket upgrade request")
+			s.logger.Debug().Str("target", target).Msg("Detected HTTP WebSocket upgrade request")
 			s.handleHTTPWebSocketUpgrade(&req, clientConn, target)
 			return
 		}
 
 		// Handle regular HTTP request through transparent proxy
-		log.Debug().Str("method", string(req.Header.Method())).Str("path", string(req.URI().Path())).Msg("Handling HTTP request")
+		s.logger.Debug().Str("method", string(req.Header.Method())).Str("path", string(req.URI().Path())).Msg("Handling HTTP request")
 		s.handleHTTPRequest(&req, clientConn, target)
 
 		if req.Header.ConnectionClose() {
@@ -506,7 +503,7 @@ func (s *Server) handleHTTPConnection(clientConn *BufferedMITMConn, target strin
 		req.Reset()
 	}
 
-	log.Debug().Str("target", target).Msg("Closed HTTP connection")
+	s.logger.Debug().Str("target", target).Msg("Closed HTTP connection")
 }
 
 // handleHTTPWebSocketUpgrade handles WebSocket upgrade for plain HTTP
@@ -514,13 +511,13 @@ func (s *Server) handleHTTPWebSocketUpgrade(req *fasthttp.Request, clientConn *B
 	// Connect to upstream server
 	upstreamConn, err := net.Dial("tcp", target)
 	if err != nil {
-		log.Error().Err(err).Str("target", target).Msg("Failed to connect to upstream for HTTP WebSocket")
+		s.logger.Error().Err(err).Str("target", target).Msg("Failed to connect to upstream for HTTP WebSocket")
 		return
 	}
 	defer upstreamConn.Close()
 
 	// Log the request we're about to send
-	log.Debug().
+	s.logger.Debug().
 		Str("method", string(req.Header.Method())).
 		Str("path", string(req.URI().Path())).
 		Str("host", string(req.Host())).
@@ -537,7 +534,7 @@ func (s *Server) handleHTTPWebSocketUpgrade(req *fasthttp.Request, clientConn *B
 	requestLine := fmt.Sprintf("GET %s HTTP/1.1\r\n", string(req.URI().Path()))
 	_, err = upstreamWriter.WriteString(requestLine)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to write request line")
+		s.logger.Error().Err(err).Msg("Failed to write request line")
 		return
 	}
 
@@ -556,7 +553,7 @@ func (s *Server) handleHTTPWebSocketUpgrade(req *fasthttp.Request, clientConn *B
 			headerLine := fmt.Sprintf("%s: %s\r\n", key, value)
 			_, err = upstreamWriter.WriteString(headerLine)
 			if err != nil {
-				log.Error().Err(err).Str("header", key).Msg("Failed to write header")
+				s.logger.Error().Err(err).Str("header", key).Msg("Failed to write header")
 				return
 			}
 		}
@@ -565,28 +562,28 @@ func (s *Server) handleHTTPWebSocketUpgrade(req *fasthttp.Request, clientConn *B
 	// End headers
 	_, err = upstreamWriter.WriteString("\r\n")
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to write header terminator")
+		s.logger.Error().Err(err).Msg("Failed to write header terminator")
 		return
 	}
 
 	if err := upstreamWriter.Flush(); err != nil {
-		log.Error().Err(err).Msg("Failed to flush WebSocket upgrade request")
+		s.logger.Error().Err(err).Msg("Failed to flush WebSocket upgrade request")
 		return
 	}
 
-	log.Debug().Msg("WebSocket upgrade request sent, waiting for response")
+	s.logger.Debug().Msg("WebSocket upgrade request sent, waiting for response")
 
 	// Read and forward the WebSocket upgrade response
 	upstreamReader := bufio.NewReader(upstreamConn)
 	var resp fasthttp.Response
 	if err := resp.Read(upstreamReader); err != nil {
-		log.Error().Err(err).Msg("Failed to read WebSocket upgrade response")
+		s.logger.Error().Err(err).Msg("Failed to read WebSocket upgrade response")
 
 		// Try to read raw response for debugging
 		upstreamConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 		rawResp := make([]byte, 1024)
 		if n, readErr := upstreamConn.Read(rawResp); readErr == nil && n > 0 {
-			log.Debug().Str("raw_response", string(rawResp[:n])).Msg("Raw response from upstream")
+			s.logger.Debug().Str("raw_response", string(rawResp[:n])).Msg("Raw response from upstream")
 		}
 		return
 	}
@@ -594,23 +591,23 @@ func (s *Server) handleHTTPWebSocketUpgrade(req *fasthttp.Request, clientConn *B
 	// Write the response back to client
 	clientWriter := bufio.NewWriter(clientConn)
 	if err := resp.Write(clientWriter); err != nil {
-		log.Error().Err(err).Msg("Failed to write WebSocket upgrade response to client")
+		s.logger.Error().Err(err).Msg("Failed to write WebSocket upgrade response to client")
 		return
 	}
 	if err := clientWriter.Flush(); err != nil {
-		log.Error().Err(err).Msg("Failed to flush WebSocket upgrade response")
+		s.logger.Error().Err(err).Msg("Failed to flush WebSocket upgrade response")
 		return
 	}
 
-	log.Debug().Str("target", target).Int("status", resp.StatusCode()).Msg("WebSocket upgrade response forwarded")
+	s.logger.Debug().Str("target", target).Int("status", resp.StatusCode()).Msg("WebSocket upgrade response forwarded")
 
 	// Only proceed with tunnel if upgrade was successful
 	if resp.StatusCode() != 101 {
-		log.Error().Int("status", resp.StatusCode()).Msg("WebSocket upgrade failed")
+		s.logger.Error().Int("status", resp.StatusCode()).Msg("WebSocket upgrade failed")
 		return
 	}
 
-	log.Debug().Str("target", target).Msg("HTTP WebSocket tunnel established")
+	s.logger.Debug().Str("target", target).Msg("HTTP WebSocket tunnel established")
 
 	// Start bidirectional copying for WebSocket frames
 	go func() {
@@ -630,7 +627,7 @@ func (s *Server) handleHTTPRequest(req *fasthttp.Request, clientConn *BufferedMI
 	// In a full implementation, you'd want to proxy the HTTP request properly
 	upstreamConn, err := net.Dial("tcp", target)
 	if err != nil {
-		log.Error().Err(err).Str("target", target).Msg("Failed to connect to upstream for HTTP")
+		s.logger.Error().Err(err).Str("target", target).Msg("Failed to connect to upstream for HTTP")
 		return
 	}
 	defer upstreamConn.Close()
@@ -638,11 +635,11 @@ func (s *Server) handleHTTPRequest(req *fasthttp.Request, clientConn *BufferedMI
 	// Forward the request
 	upstreamWriter := bufio.NewWriter(upstreamConn)
 	if err := req.Write(upstreamWriter); err != nil {
-		log.Error().Err(err).Msg("Failed to write HTTP request to upstream")
+		s.logger.Error().Err(err).Msg("Failed to write HTTP request to upstream")
 		return
 	}
 	if err := upstreamWriter.Flush(); err != nil {
-		log.Error().Err(err).Msg("Failed to flush HTTP request")
+		s.logger.Error().Err(err).Msg("Failed to flush HTTP request")
 		return
 	}
 

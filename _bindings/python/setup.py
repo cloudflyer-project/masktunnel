@@ -350,6 +350,78 @@ def install_gopy_and_tools() -> None:
     os.environ["PATH"] = env.get("PATH", os.environ.get("PATH", ""))
 
 
+def configure_python_env(target_python: str, env: dict) -> dict:
+    """Configure CGO flags for the current platform using the target Python interpreter.
+
+    On Windows: use the target interpreter layout for include/libs and set C17 standard.
+    On macOS: suppress deprecated warnings for clang.
+    """
+    system_name = platform.system().lower()
+    try:
+        if system_name == "windows":
+            target_py = Path(target_python)
+            py_dir = target_py.parent
+
+            try:
+                version_output = subprocess.run(
+                    [str(target_py), "-c", "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')"],
+                    capture_output=True, text=True, check=True
+                ).stdout.strip()
+                py_version = version_output
+            except Exception:
+                py_version = f"{sys.version_info.major}{sys.version_info.minor}"
+
+            include_dir = py_dir / "include"
+            libs_dir = py_dir / "libs"
+
+            if not include_dir.exists() or not libs_dir.exists():
+                pyvenv_cfg = py_dir.parent / "pyvenv.cfg"
+                if pyvenv_cfg.exists():
+                    try:
+                        cfg_text = pyvenv_cfg.read_text()
+                        for line in cfg_text.splitlines():
+                            if line.startswith("home"):
+                                base_path = Path(line.split("=", 1)[1].strip())
+                                if (base_path / "include").exists():
+                                    include_dir = base_path / "include"
+                                if (base_path / "libs").exists():
+                                    libs_dir = base_path / "libs"
+                                break
+                    except Exception:
+                        pass
+
+            print(f"Windows CGO config: py_version={py_version}, include={include_dir}, libs={libs_dir}")
+
+            env["CGO_ENABLED"] = "1"
+            # Use C17 standard to avoid C23 bool conflict (gopy generates "typedef uint8_t bool;")
+            # Set CC to include -std=gnu17 because gopy's build.py rewrites CGO_CFLAGS internally
+            env["CC"] = "gcc -std=gnu17"
+            cflags = []
+            if include_dir.exists():
+                cflags.append(f"-I{include_dir}")
+            if env.get("CGO_CFLAGS"):
+                cflags.append(env["CGO_CFLAGS"])
+            env["CGO_CFLAGS"] = " ".join(cflags).strip()
+
+            ldflags = []
+            if libs_dir.exists():
+                ldflags.append(f"-L{libs_dir}")
+            ldflags.append(f"-lpython{py_version}")
+            if env.get("CGO_LDFLAGS"):
+                ldflags.append(env["CGO_LDFLAGS"])
+            env["CGO_LDFLAGS"] = " ".join(ldflags).strip()
+            return env
+        elif system_name == "darwin":
+            # macOS 15+ clang treats -Ofast as deprecated error
+            # gopy's build.py rewrites CGO_CFLAGS internally, so we pass the flag via CC instead
+            env["CC"] = "clang -Wno-deprecated"
+            return env
+        return env
+    except Exception as cfg_err:
+        print(f"Warning: failed to configure platform CGO flags: {cfg_err}")
+        return env
+
+
 def build_python_bindings(vm_python: Optional[str] = None) -> None:
     print("Building Python bindings with gopy...")
 
@@ -370,6 +442,9 @@ def build_python_bindings(vm_python: Optional[str] = None) -> None:
             env["GOTOOLCHAIN"] = tc
 
         target_vm = vm_python or sys.executable
+
+        # Configure platform-specific CGO flags based on the target interpreter
+        env = configure_python_env(target_vm, env)
 
         gopy_executable = shutil.which("gopy", path=env.get("PATH", ""))
         if not gopy_executable:

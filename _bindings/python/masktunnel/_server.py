@@ -11,6 +11,22 @@ from masktunnellib import masktunnel as gomasktunnel  # type: ignore
 from ._utils import _logger, BufferZerologLogger
 
 
+def _as_str(value: object, field: str) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        raise TypeError(f"{field} must be str, got None")
+    raise TypeError(f"{field} must be str, got {type(value).__name__}")
+
+
+def _as_int(value: object, field: str) -> int:
+    if isinstance(value, bool):
+        raise TypeError(f"{field} must be int, got bool")
+    if isinstance(value, int):
+        return int(value)
+    raise TypeError(f"{field} must be int, got {type(value).__name__}")
+
+
 @dataclass
 class ServerOptions:
     addr: str = ""
@@ -40,14 +56,14 @@ class Server:
             opt = gomasktunnel.DefaultServerOption()
         else:
             opt = gomasktunnel.DefaultServerOption()
-            opt.Addr = options.addr
-            opt.Port = options.port
-            opt.UserAgent = options.user_agent
-            opt.Payload = options.payload
-            opt.UpstreamProxy = options.upstream_proxy
-            opt.Username = options.username
-            opt.Password = options.password
-            opt.Verbose = int(options.verbose)
+            opt.Addr = _as_str(options.addr, "addr")
+            opt.Port = _as_str(options.port, "port")
+            opt.UserAgent = _as_str(options.user_agent, "user_agent")
+            opt.Payload = _as_str(options.payload, "payload")
+            opt.UpstreamProxy = _as_str(options.upstream_proxy, "upstream_proxy")
+            opt.Username = _as_str(options.username, "username")
+            opt.Password = _as_str(options.password, "password")
+            opt.Verbose = _as_int(options.verbose, "verbose")
 
         # Use buffer-based logger system for Go bindings
         self._managed_logger = BufferZerologLogger(logger, f"server_{id(self)}")
@@ -79,7 +95,7 @@ class Server:
         return int(self._raw.ResetSessions())
 
     def set_upstream_proxy(self, proxy_url: str) -> None:
-        self._raw.SetUpstreamProxy(proxy_url)
+        self._raw.SetUpstreamProxy(_as_str(proxy_url, "proxy_url"))
 
     def get_ca_pem(self) -> bytes:
         return bytes(self._raw.GetCAPEM() or b"")

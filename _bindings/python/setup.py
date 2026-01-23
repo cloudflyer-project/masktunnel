@@ -558,19 +558,7 @@ class SdistWithGoSources(_sdist):
     def run(self):
         go_src_dir = None
         created_files = []
-        readme_backup = None
         try:
-            repo_readme = here.parent.parent / "README.md"
-            local_readme = here / "README.md"
-
-            if repo_readme.exists():
-                try:
-                    if local_readme.exists():
-                        readme_backup = local_readme.read_text(encoding="utf-8")
-                    local_readme.write_text(repo_readme.read_text(encoding="utf-8"), encoding="utf-8")
-                except Exception as e:
-                    print(f"Warning: failed to sync README.md for sdist: {e}")
-
             go_src_dir = prepare_go_sources()
             for fname in ["go.mod", "go.sum"]:
                 fpath = here / fname
@@ -578,11 +566,6 @@ class SdistWithGoSources(_sdist):
                     created_files.append(fpath)
             super().run()
         finally:
-            if readme_backup is not None:
-                try:
-                    (here / "README.md").write_text(readme_backup, encoding="utf-8")
-                except Exception:
-                    pass
             try:
                 if go_src_dir and Path(go_src_dir).exists():
                     shutil.rmtree(go_src_dir)
@@ -624,10 +607,6 @@ class BinaryDistribution(setuptools.Distribution):
 
 
 def get_long_description() -> str:
-    repo_readme = here.parent.parent / "README.md"
-    if repo_readme.exists():
-        return repo_readme.read_text(encoding="utf-8")
-
     local_readme = here / "README.md"
     if local_readme.exists():
         return local_readme.read_text(encoding="utf-8")

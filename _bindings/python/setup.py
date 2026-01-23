@@ -34,6 +34,7 @@ if "-buildvcs=false" not in current_goflags:
 
 install_requires = [
     "setuptools>=40.0",
+    "click>=8.0",
 ]
 
 extras_require = {
@@ -614,14 +615,14 @@ ensure_placeholder_masktunnellib()
 
 setup(
     name="masktunnel",
-    version="0.1.0",
+    version="1.0.9",
     description="Python bindings for MaskTunnel (Go)",
     long_description=get_long_description(),
     long_description_content_type="text/markdown",
     author="cloudflyer-project",
     url="https://github.com/cloudflyer-project/masktunnel",
     license="GPL-3.0",
-    packages=find_packages(include=["masktunnellib", "masktunnellib.*", "masktunnel"]),
+    packages=find_packages(include=["masktunnellib", "masktunnellib.*", "masktunnel", "masktunnel.*"]),
     package_data={
         "masktunnellib": ["*.py", "*.so", "*.pyd", "*.dll", "*.dylib", "*.h", "*.c", "*.go"],
     },
@@ -629,8 +630,18 @@ setup(
     install_requires=install_requires,
     extras_require=extras_require,
     python_requires=">=3.9",
+    entry_points={
+        "console_scripts": [
+            "masktunnel=masktunnel._cli:cli",
+        ],
+    },
     zip_safe=False,
     platforms=["any"],
+    project_urls={
+        "Bug Reports": "https://github.com/cloudflyer-project/masktunnel/issues",
+        "Source": "https://github.com/cloudflyer-project/masktunnel",
+        "Documentation": "https://github.com/cloudflyer-project/masktunnel#readme",
+    },
     distclass=BinaryDistribution,
     cmdclass={
         "sdist": SdistWithGoSources,

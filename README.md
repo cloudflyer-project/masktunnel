@@ -180,6 +180,72 @@ Some browsers maintain their own certificate stores:
 certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "MaskTunnel" -i cert.pem
 ```
 
+## Python Bindings
+
+MaskTunnel provides Python bindings for easy integration into Python applications.
+
+### Installation
+
+```bash
+pip install masktunnel
+```
+
+### Basic Usage
+
+```python
+from masktunnel import Server
+
+# Create and start a proxy server
+server = Server()
+print(f"Proxy running at: {server.addr}")
+
+# Get the CA certificate for HTTPS interception
+ca_pem = server.get_ca_pem()
+
+# Stop the server when done
+server.stop()
+```
+
+### Async Usage
+
+```python
+import asyncio
+from masktunnel import Server
+
+async def main():
+    server = Server()
+    print(f"Proxy running at: {server.addr}")
+    
+    # Run the server in background
+    await server.async_start()
+    
+    # Do other async work...
+    await asyncio.sleep(10)
+    
+    # Stop the server
+    await server.async_stop()
+
+asyncio.run(main())
+```
+
+### Server Options
+
+```python
+from masktunnel import Server
+from masktunnel._server import ServerOptions
+
+options = ServerOptions(
+    port="9090",
+    username="user",
+    password="pass",
+    payload="console.log('injected');",
+    upstream_proxy="http://upstream:8080",
+    verbose=1
+)
+
+server = Server(options=options)
+```
+
 ## Acknowledgments
 
 MaskTunnel builds upon the excellent work of:

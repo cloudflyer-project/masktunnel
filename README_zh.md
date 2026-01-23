@@ -178,6 +178,72 @@ sudo trust extract-compat
 certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "MaskTunnel" -i cert.pem
 ```
 
+## Python 绑定
+
+MaskTunnel 提供 Python 绑定，便于集成到 Python 应用程序中。
+
+### 安装
+
+```bash
+pip install masktunnel
+```
+
+### 基本用法
+
+```python
+from masktunnel import Server
+
+# 创建并启动代理服务器
+server = Server()
+print(f"代理运行在: {server.addr}")
+
+# 获取用于 HTTPS 拦截的 CA 证书
+ca_pem = server.get_ca_pem()
+
+# 完成后停止服务器
+server.stop()
+```
+
+### 异步用法
+
+```python
+import asyncio
+from masktunnel import Server
+
+async def main():
+    server = Server()
+    print(f"代理运行在: {server.addr}")
+    
+    # 在后台运行服务器
+    await server.async_start()
+    
+    # 执行其他异步操作...
+    await asyncio.sleep(10)
+    
+    # 停止服务器
+    await server.async_stop()
+
+asyncio.run(main())
+```
+
+### 服务器选项
+
+```python
+from masktunnel import Server
+from masktunnel._server import ServerOptions
+
+options = ServerOptions(
+    port="9090",
+    username="user",
+    password="pass",
+    payload="console.log('injected');",
+    upstream_proxy="http://upstream:8080",
+    verbose=1
+)
+
+server = Server(options=options)
+```
+
 ## 致谢
 
 MaskTunnel 基于以下优秀项目构建：

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"math/big"
 	"net"
 	"sync"
@@ -149,7 +150,23 @@ func (cm *CertManager) generateCertificate(hostname string) (*tls.Certificate, e
 	return cert, nil
 }
 
-// GetCACert returns the CA certificate in PEM format
+// GetCACert returns the DER-encoded CA certificate bytes.
 func (cm *CertManager) GetCACert() []byte {
+	if cm == nil || cm.caCert == nil {
+		return nil
+	}
 	return cm.caCert.Raw
+}
+
+// GetCACertDER returns the DER-encoded CA certificate bytes.
+func (cm *CertManager) GetCACertDER() []byte {
+	return cm.GetCACert()
+}
+
+// GetCACertPEM returns the PEM-encoded CA certificate.
+func (cm *CertManager) GetCACertPEM() []byte {
+	if cm == nil || cm.caCert == nil {
+		return nil
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cm.caCert.Raw})
 }

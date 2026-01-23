@@ -1,0 +1,18 @@
+# Include Go source files in masktunnel_go directory
+recursive-include masktunnel_go *.go
+include go.mod
+include go.sum
+
+# Include documentation
+include README.md
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .git*
+global-exclude *.so
+global-exclude *.dylib
+global-exclude *.dll
+
+# Exclude existing bindings directory to force rebuild
+prune masktunnellib

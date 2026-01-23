@@ -1,0 +1,297 @@
+name: Build Python Bindings
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      enable_tmate:
+        description: "Enable tmate debug session on failure"
+        required: false
+        type: boolean
+        default: false
+      build_linux_wheels:
+        description: "Build Linux wheels"
+        required: false
+        type: boolean
+        default: false
+      build_windows_wheels:
+        description: "Build Windows wheels"
+        required: false
+        type: boolean
+        default: false
+      build_macos_wheels:
+        description: "Build macOS wheels"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  tests:
+    name: Tests Py${{ matrix.python }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.9"
+          - os: ubuntu-latest
+            python: "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Show Versions
+        run: |
+          python --version
+          pip --version
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Install masktunnel (Editable, dev extras)
+        run: |
+          python -m pip install -e _bindings/python[dev]
+
+      - name: Run Pytest
+        working-directory: _bindings/python
+        run: pytest -v -n auto
+
+      - name: Start tmate session (manual, on failure)
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.enable_tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+  build_linux_wheels:
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.build_linux_wheels) }}
+    name: Linux wheels (x64)
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clean previous build artifacts
+        working-directory: _bindings/python
+        run: rm -rf masktunnellib build dist || true
+
+      - name: Build + repair inside manylinux container
+        env:
+          PY_MAJOR_MINOR: ${{ matrix.python }}
+        run: |
+          set -euxo pipefail
+          PYNODOT="${PY_MAJOR_MINOR/.}"
+          CPY="cp${PYNODOT}-cp${PYNODOT}"
+          echo "Using CPython tag: ${CPY}"
+
+          IMAGE="quay.io/pypa/manylinux2014_x86_64"
+          PLAT="manylinux2014_x86_64"
+          echo "Image=${IMAGE}, PLAT=${PLAT}"
+
+          docker run --rm \
+            -e PLAT="${PLAT}" \
+            -v "$PWD":/project \
+            -w /project \
+            "${IMAGE}" bash -lc "\
+              set -euxo pipefail; \
+              PY=/opt/python/${CPY}/bin/python; \
+              echo Using Python: \$PY; \$PY --version; \
+              \$PY -m pip install -U pip build auditwheel; \
+              cd _bindings/python; \
+              \$PY -m build --wheel --outdir /project/wheelhouse_raw/; \
+              mkdir -p /project/wheelhouse_manylinux/; \
+              auditwheel show /project/wheelhouse_raw/*.whl || true; \
+              auditwheel repair --plat \"${PLAT}\" /project/wheelhouse_raw/*.whl -w /project/wheelhouse_manylinux/"
+
+          echo "=== Wheels after repair ==="
+          ls -la wheelhouse_manylinux || true
+
+      - name: Upload Artifacts (per Python)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x64-py${{ matrix.python }}
+          path: ./wheelhouse_manylinux/*.whl
+
+      - name: Start tmate session (manual, on failure)
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.enable_tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+  package_linux_wheels:
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.build_linux_wheels) }}
+    name: Package Linux wheels per arch
+    needs: build_linux_wheels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download x64 wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-linux-x64-*
+          merge-multiple: true
+          path: ./pack/wheels-linux-x64
+
+      - name: Upload combined x64 wheels
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x64
+          path: ./pack/wheels-linux-x64/**
+
+      - name: Start tmate session (manual, on failure)
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.enable_tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+  build_windows_wheels:
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.build_windows_wheels) }}
+    name: Windows Cp39+
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Wheels (cibuildwheel)
+        uses: pypa/cibuildwheel@v2.16.5
+        with:
+          package-dir: _bindings/python
+          output-dir: wheelhouse
+        env:
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_ARCHS: "AMD64"
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_BEFORE_BUILD_WINDOWS: "cmd /c if exist masktunnellib rmdir /s /q masktunnellib"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-amd64
+          path: ./wheelhouse/*.whl
+
+      - name: Start tmate session (manual, on failure)
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.enable_tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+  build_sdist:
+    if: startsWith(github.ref, 'refs/tags/')
+    name: Build source distribution
+    runs-on: ubuntu-latest
+     
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build setuptools wheel
+          
+      - name: Build source distribution
+        run: |
+          cd _bindings/python
+          python -m build --sdist --outdir ../../dist/
+          
+      - name: Upload source distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-dist
+          path: ./dist/*.tar.gz
+
+      - name: Start tmate session (manual, on failure)
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.enable_tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+  build_macos_wheels:
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.build_macos_wheels) }}
+    name: macOS wheels (x64/arm64)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-14]
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Clean previous build artifacts
+        working-directory: _bindings/python
+        run: rm -rf masktunnellib build dist || true
+
+      - name: Show Python and sysconfig
+        run: |
+          python --version
+          python -c "import sysconfig, sys; print('LIBDIR:', sysconfig.get_config_var('LIBDIR')); print('LDLIBRARY:', sysconfig.get_config_var('LDLIBRARY')); print('prefix:', sysconfig.get_config_var('prefix'))"
+      - name: Build wheel
+        working-directory: _bindings/python
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir ../../wheelhouse/
+      - name: Upload Artifacts (per Python)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.os == 'macos-15-intel' && 'x64' || 'arm64' }}-py${{ matrix.python }}
+          path: ./wheelhouse/*.whl
+
+      - name: Start tmate session (manual, on failure)
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.enable_tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+  package_macos_wheels:
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.build_macos_wheels) }}
+    name: Package macOS wheels per arch
+    needs: build_macos_wheels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS x64 wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-macos-x64-*
+          merge-multiple: true
+          path: ./pack/wheels-macos-x64
+
+      - name: Download macOS arm64 wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-macos-arm64-*
+          merge-multiple: true
+          path: ./pack/wheels-macos-arm64
+
+      - name: Upload combined macOS x64 wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-x64
+          path: ./pack/wheels-macos-x64/**
+
+      - name: Upload combined macOS arm64 wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-arm64
+          path: ./pack/wheels-macos-arm64/**

@@ -116,34 +116,73 @@ func (s *Server) serveMITMOnTLS(clientTLSConn net.Conn, target string) {
 				return
 			}
 
-			resp, streamed, err := s.processMITMRequest(&ctx.Request, sess, target, clientTLSConn)
+			httpResp, upstreamResp, hijacked, err := s.processMITMRequest(&ctx.Request, sess, target, clientTLSConn)
 			if err != nil {
 				s.logger.Error().Err(err).Msg("Failed to process MITM request")
 				ctx.Error("Bad Gateway: "+err.Error(), fasthttp.StatusBadGateway)
 				return
 			}
 
-			if streamed {
-				// The connection has been taken over for WebSocket or another streaming protocol.
-				// We must tell the fasthttp server to release control of it.
-				ctx.Hijack(func(c net.Conn) {
-					// Do nothing, as the connection is now managed by goroutines
-					// started within processMITMRequest.
-				})
+			if hijacked {
+				// Connection is now managed by goroutines started within processMITMRequest.
+				ctx.HijackSetNoResponse(true)
+				ctx.Hijack(func(c net.Conn) {})
 				return
 			}
 
-			if resp != nil {
-				defer resp.Body.Close()
+			if upstreamResp != nil {
+				// Stream the upstream response through fasthttp to avoid corrupting the connection
+				// with an extra implicit response written by fasthttp.
+				ctx.SetStatusCode(upstreamResp.StatusCode)
 
-				ctx.Response.SetStatusCode(resp.StatusCode)
-				for key, values := range resp.Header {
+				cleanHeader := make(http.Header, len(upstreamResp.Header))
+				for k, vv := range upstreamResp.Header {
+					valuesCopy := make([]string, len(vv))
+					copy(valuesCopy, vv)
+					cleanHeader[k] = valuesCopy
+				}
+				removeHopByHopHeaders(cleanHeader)
+				// The upstream library may return already-decompressed bodies while still
+				// retaining Content-Encoding. Forwarding such a header would make clients
+				// attempt decompression and fail.
+				cleanHeader.Del("Content-Encoding")
+				cleanHeader.Del("Content-Length")
+				cleanHeader.Del("Transfer-Encoding")
+
+				for key, values := range cleanHeader {
 					for _, value := range values {
 						ctx.Response.Header.Add(key, value)
 					}
 				}
 
-				body, err := io.ReadAll(resp.Body)
+				if upstreamResp.RawBody == nil {
+					ctx.Response.SetBody(nil)
+					return
+				}
+
+				bodySize := -1
+				if upstreamResp.ContentLength >= 0 {
+					maxInt := int64(^uint(0) >> 1)
+					if upstreamResp.ContentLength <= maxInt {
+						bodySize = int(upstreamResp.ContentLength)
+					}
+				}
+
+				ctx.Response.SetBodyStream(upstreamResp.RawBody, bodySize)
+				return
+			}
+
+			if httpResp != nil {
+				defer httpResp.Body.Close()
+
+				ctx.Response.SetStatusCode(httpResp.StatusCode)
+				for key, values := range httpResp.Header {
+					for _, value := range values {
+						ctx.Response.Header.Add(key, value)
+					}
+				}
+
+				body, err := io.ReadAll(httpResp.Body)
 				if err != nil {
 					s.logger.Error().Err(err).Msg("Failed to read response body")
 					ctx.Error("Failed to read response body", fasthttp.StatusInternalServerError)
@@ -166,11 +205,12 @@ func (s *Server) serveMITMOnTLS(clientTLSConn net.Conn, target string) {
 }
 
 // processMITMRequest handles individual HTTP requests in MITM mode
-func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session, target string, clientConn net.Conn) (*http.Response, bool, error) {
+func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session, target string, clientConn net.Conn) (*http.Response, *azuretls.Response, bool, error) {
 	// Check if this is a WebSocket upgrade request
 	if s.isWebSocketUpgradeRequest(r) {
 		s.logger.Debug().Str("target", target).Msg("Detected WebSocket upgrade request in MITM")
-		return s.handleWebSocketUpgradeInMITM(r, sess, target, clientConn)
+		httpResp, hijacked, err := s.handleWebSocketUpgradeInMITM(r, sess, target, clientConn)
+		return httpResp, nil, hijacked, err
 	}
 
 	scheme := "https"
@@ -219,52 +259,24 @@ func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session,
 	resp, err := sess.Do(azureReq)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("MITM request failed")
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 	bodyStream := resp.RawBody
 
 	if !s.payloadInjector.ShouldInject(contentType) {
-		resp.Header.Del("Content-Encoding")
-		resp.Header.Del("Content-Length")
-
-		var headerBuilder strings.Builder
-		headerBuilder.WriteString(fmt.Sprintf("HTTP/1.1 %s\r\n", resp.Status))
-
-		contentLength := resp.Header.Get("Content-Length")
-		useChunked := contentLength == ""
-		if useChunked {
-			resp.Header.Set("Transfer-Encoding", "chunked")
-			resp.Header.Del("Content-Length")
-		}
-
-		resp.Header.Write(&headerBuilder)
-		headerBuilder.WriteString("\r\n")
-
-		if _, err := io.WriteString(clientConn, headerBuilder.String()); err != nil {
-			_ = bodyStream.Close()
-			return nil, false, err
-		}
-
-		writer := NewChunkedWriter(clientConn, useChunked)
-		if _, err := io.Copy(writer, bodyStream); err != nil {
-			_ = bodyStream.Close()
-			return nil, false, err
-		}
-		writer.Close()
-
-		_ = bodyStream.Close()
-
-		s.logger.Debug().Str("type", "mitm_response").Int("status", resp.StatusCode).Msg("Directly streamed MITM response")
-		return nil, true, nil
+		// Stream via fasthttp response writer (do not write directly to clientConn).
+		// This avoids corrupting keep-alive connections with an extra implicit response.
+		s.logger.Debug().Str("type", "mitm_response").Int("status", resp.StatusCode).Msg("Streaming MITM response")
+		return nil, resp, false, nil
 	}
 
 	defer bodyStream.Close()
 	bodyBytes, err := io.ReadAll(bodyStream)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to read response body for injection")
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	contentEncoding := resp.Header.Get("Content-Encoding")
@@ -279,7 +291,7 @@ func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session,
 	httpReq, err := http.NewRequest(method, fullURL, nil)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to create dummy http.Request for response context")
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	httpResp := &http.Response{
@@ -302,7 +314,7 @@ func (s *Server) processMITMRequest(r *fasthttp.Request, sess *azuretls.Session,
 		Int("size", len(processedBody)).
 		Msg("MITM HTTP response with injected payload")
 
-	return httpResp, false, nil
+	return httpResp, nil, false, nil
 }
 
 // fromFhttpHeader converts an fhttp.Header to a standard http.Header.

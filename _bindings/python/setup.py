@@ -617,7 +617,7 @@ ensure_placeholder_masktunnellib()
 
 setup(
     name="masktunnel",
-    version="1.0.9",
+    version="1.0.10",
     description="Python bindings for MaskTunnel (Go)",
     long_description=get_long_description(),
     long_description_content_type="text/markdown",

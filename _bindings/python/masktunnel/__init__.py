@@ -5,7 +5,7 @@ This package provides a Python-friendly API on top of the generated native bindi
 
 __version__ = "1.0.14"
 
-from ._server import Server
+from ._server import Server, ServerOptions
 from ._utils import set_log_level
 
 __all__ = ["Server", "set_log_level"]

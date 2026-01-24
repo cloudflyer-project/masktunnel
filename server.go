@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ type Server struct {
 	auth            *BasicAuth
 	certManager     *CertManager
 	httpServer      *http.Server
+	listener        net.Listener
+	actualAddr      string
 	logger          zerolog.Logger
 }
 
@@ -54,8 +57,15 @@ func NewServer(config *Config) *Server {
 func (s *Server) Start() error {
 	addr := s.config.Addr + ":" + s.config.Port
 
+	// Create listener first to get the actual bound address (important when port is 0)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	s.listener = listener
+	s.actualAddr = listener.Addr().String()
+
 	s.httpServer = &http.Server{
-		Addr:    addr,
 		Handler: s,
 		// Configure reasonable timeouts
 		ReadTimeout:       30 * time.Second,
@@ -64,7 +74,13 @@ func (s *Server) Start() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	return s.httpServer.ListenAndServe()
+	return s.httpServer.Serve(listener)
+}
+
+// ActualAddr returns the actual listening address (host:port).
+// This is useful when port 0 is specified to get the OS-assigned port.
+func (s *Server) ActualAddr() string {
+	return s.actualAddr
 }
 
 // Stop stops the proxy server

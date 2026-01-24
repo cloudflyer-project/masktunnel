@@ -82,6 +82,15 @@ class Server:
             if "Server closed" not in str(e):
                 raise
 
+    def start_background(self) -> None:
+        """Start the server in background (non-blocking).
+
+        After this method returns, the server is ready to accept connections
+        and `addr` property will return the actual listening address
+        (useful when port='0' is specified to get OS-assigned port).
+        """
+        self._raw.StartBackground()
+
     async def async_start(self) -> None:
         await asyncio.to_thread(self.start)
 

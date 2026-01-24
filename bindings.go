@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -70,6 +72,40 @@ func (h *ServerHandle) Start() error {
 	return h.s.Start()
 }
 
+// StartBackground starts the proxy server in a background goroutine.
+// It waits until the server is ready to accept connections, then returns.
+// The actual listening address can be retrieved via Addr() after this returns.
+func (h *ServerHandle) StartBackground() error {
+	if h == nil || h.s == nil {
+		return fmt.Errorf("server not initialized")
+	}
+
+	addr := h.s.config.Addr + ":" + h.s.config.Port
+
+	// Create listener first to get the actual bound address
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	h.s.listener = listener
+	h.s.actualAddr = listener.Addr().String()
+
+	h.s.httpServer = &http.Server{
+		Handler:           h.s,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Start serving in background
+	go func() {
+		h.s.httpServer.Serve(listener)
+	}()
+
+	return nil
+}
+
 // Stop stops the proxy server.
 func (h *ServerHandle) Stop() error {
 	if h == nil || h.s == nil {
@@ -84,10 +120,17 @@ func (h *ServerHandle) Close() error {
 }
 
 // Addr returns the effective listen address (host:port).
+// If the server has started, returns the actual bound address.
+// Otherwise, returns the configured address.
 func (h *ServerHandle) Addr() string {
 	if h == nil || h.s == nil || h.s.config == nil {
 		return ""
 	}
+	// Return actual address if server has started
+	if h.s.actualAddr != "" {
+		return h.s.actualAddr
+	}
+	// Fallback to configured address
 	return net.JoinHostPort(h.s.config.Addr, h.s.config.Port)
 }
 

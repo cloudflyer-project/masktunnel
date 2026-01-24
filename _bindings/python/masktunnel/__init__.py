@@ -3,7 +3,7 @@
 This package provides a Python-friendly API on top of the generated native bindings.
 """
 
-__version__ = "1.0.15"
+__version__ = "1.0.16"
 
 from ._server import Server, ServerOptions
 from ._utils import set_log_level

@@ -120,3 +120,19 @@ class Server:
 
     async def async_close(self) -> None:
         await asyncio.to_thread(self.close)
+
+    # Context manager support (with statement)
+    def __enter__(self) -> "Server":
+        self.start_background()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    # Async context manager support (async with statement)
+    async def __aenter__(self) -> "Server":
+        self.start_background()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.async_close()

@@ -64,8 +64,7 @@ masktunnel server --port 8080
 Create a server with options:
 
 ```python
-from masktunnel import Server
-from masktunnel._server import ServerOptions
+from masktunnel import Server, ServerOptions
 
 opts = ServerOptions(
 	port="8080",

@@ -21,8 +21,13 @@ import (
 func (s *Server) handleMITM(clientConn net.Conn, target string) {
 	// Parse hostname from target (remove port if present) for certificate generation
 	hostname := target
-	if idx := strings.LastIndex(target, ":"); idx != -1 {
-		hostname = target[:idx]
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		hostname = host
+	} else {
+		// Fallback: handle targets that may not be in host:port form.
+		if idx := strings.LastIndex(target, ":"); idx != -1 {
+			hostname = target[:idx]
+		}
 	}
 
 	// Log MITM setup with structured logging

@@ -31,14 +31,25 @@ jobs:
       fail-fast: false
       matrix:
         channel:
+          - system
           - brew
           - conda
           - python-org
-          - portable
+          - uv
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Python (system)
+        if: matrix.channel == 'system'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Use macOS system Python3
+          PY_BIN="$(command -v python3)"
+          echo "PYTHON_BIN=${PY_BIN}" >> "$GITHUB_ENV"
+          "$PY_BIN" --version
 
       - name: Setup Python (python.org via actions/setup-python)
         if: matrix.channel == 'python-org'
@@ -87,14 +98,14 @@ jobs:
           auto-activate-base: false
           channels: conda-forge
 
-      - name: Setup Python (Portable via uv)
-        if: matrix.channel == 'portable'
+      - name: Setup Python (uv)
+        if: matrix.channel == 'uv'
         uses: astral-sh/setup-uv@v3
         with:
           version: "latest"
 
-      - name: Create venv (portable)
-        if: matrix.channel == 'portable'
+      - name: Create venv (uv)
+        if: matrix.channel == 'uv'
         shell: bash
         run: |
           set -euxo pipefail
@@ -122,8 +133,8 @@ jobs:
           python -c "import sys; print(sys.executable)"
           echo "PYTHON_BIN=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
 
-      - name: Create venv (brew/python-org)
-        if: matrix.channel == 'brew' || matrix.channel == 'python-org'
+      - name: Create venv (system/brew/python-org)
+        if: matrix.channel == 'system' || matrix.channel == 'brew' || matrix.channel == 'python-org'
         shell: bash
         run: |
           set -euxo pipefail
@@ -142,6 +153,7 @@ jobs:
         run: |
           set -euxo pipefail
           "$PYTHON_BIN" -m ensurepip --upgrade || true
+          "$PYTHON_BIN" -m pip --version
           "$PYTHON_BIN" -m pip install -U pip setuptools wheel
 
       - name: Install masktunnel (PyPI)

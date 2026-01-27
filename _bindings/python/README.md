@@ -1,7 +1,6 @@
 # MaskTunnel Python Bindings
 
 [![PyPI version](https://img.shields.io/pypi/v/masktunnel.svg)](https://pypi.org/project/masktunnel/)
-[![Python versions](https://img.shields.io/pypi/pyversions/masktunnel.svg)](https://pypi.org/project/masktunnel/)
 
 Python bindings for MaskTunnel — an HTTP(S) MITM proxy that adapts its browser fingerprint based on the request User-Agent.
 
@@ -64,8 +63,7 @@ masktunnel server --port 8080
 Create a server with options:
 
 ```python
-from masktunnel import Server
-from masktunnel._server import ServerOptions
+from masktunnel import Server, ServerOptions
 
 opts = ServerOptions(
 	port="8080",

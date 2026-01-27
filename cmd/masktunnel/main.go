@@ -45,7 +45,11 @@ func main() {
 	// Setup zerolog
 	output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}
 	output.FormatMessage = func(i interface{}) string {
-		return i.(string)
+		s, ok := i.(string)
+		if ok {
+			return s
+		}
+		return fmt.Sprint(i)
 	}
 	log.Logger = zerolog.New(output).With().Timestamp().Logger()
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -234,9 +235,35 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Proxy:           http.ProxyFromEnvironment,
+	}
+	if s.config.UpstreamProxy != "" {
+		if proxyURL, err := url.Parse(s.config.UpstreamProxy); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
 	}
 
-	outReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body)
+	outReqURL := r.URL
+	if !outReqURL.IsAbs() {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		host := r.Host
+		if host == "" {
+			host = outReqURL.Host
+		}
+		outReqURL = &url.URL{
+			Scheme:   scheme,
+			Host:     host,
+			Path:     outReqURL.Path,
+			RawPath:  outReqURL.RawPath,
+			RawQuery: outReqURL.RawQuery,
+			Fragment: outReqURL.Fragment,
+		}
+	}
+
+	outReq, err := http.NewRequest(r.Method, outReqURL.String(), r.Body)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return

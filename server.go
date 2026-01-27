@@ -476,12 +476,16 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
+	defer func() {
+		// If we didn't successfully switch protocols, ensure response body is closed.
+		if resp.StatusCode != http.StatusSwitchingProtocols {
+			_ = resp.Body.Close()
+		}
+	}()
 
 	// Check if upstream accepted the WebSocket upgrade
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		s.logger.Error().Int("status", resp.StatusCode).Msg("Upstream rejected WebSocket upgrade")
-		defer resp.Body.Close()
-
 		// Forward the rejection response
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)

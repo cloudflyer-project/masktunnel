@@ -493,24 +493,35 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Copy response headers for successful upgrade
-	removeHopByHopHeadersExceptWebSocket(resp.Header)
-	copyHeaders(w.Header(), resp.Header)
-	w.WriteHeader(http.StatusSwitchingProtocols)
-
-	// Get the hijacker to access raw connections
+	// Get the hijacker to access raw connections BEFORE writing response
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 
-	clientConn, _, err := hijacker.Hijack()
+	clientConn, clientBuf, err := hijacker.Hijack()
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to hijack client connection")
 		return
 	}
 	defer clientConn.Close()
+
+	// Build and send the 101 response manually after hijacking
+	removeHopByHopHeadersExceptWebSocket(resp.Header)
+	var respBuilder strings.Builder
+	respBuilder.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+	for key, values := range resp.Header {
+		for _, value := range values {
+			respBuilder.WriteString(key)
+			respBuilder.WriteString(": ")
+			respBuilder.WriteString(value)
+			respBuilder.WriteString("\r\n")
+		}
+	}
+	respBuilder.WriteString("\r\n")
+	clientBuf.WriteString(respBuilder.String())
+	clientBuf.Flush()
 
 	// Get the upstream connection
 	upstreamConn, ok := resp.Body.(io.ReadWriteCloser)

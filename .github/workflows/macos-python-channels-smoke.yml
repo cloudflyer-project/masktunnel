@@ -1,0 +1,174 @@
+name: macOS Python Channels Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: "Python version (e.g. 3.12, 3.12.1). Empty means channel default/latest."
+        required: false
+        type: string
+        default: ""
+      masktunnel_version:
+        description: "masktunnel version to install from PyPI (e.g. 1.0.20). Empty means latest."
+        required: false
+        type: string
+        default: ""
+      install_source:
+        description: "Where to install masktunnel from: pypi or editable (repo)."
+        required: false
+        type: choice
+        default: pypi
+        options:
+          - pypi
+          - editable
+
+jobs:
+  smoke:
+    name: ${{ matrix.channel }} (py=${{ inputs.python_version || 'default' }})
+    runs-on: macos-14
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - brew
+          - conda
+          - python-org
+          - portable
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python (python.org via actions/setup-python)
+        if: matrix.channel == 'python-org'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version || '3.x' }}
+
+      - name: Setup Python (Homebrew)
+        if: matrix.channel == 'brew'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew update
+          if [[ -n "${{ inputs.python_version }}" ]]; then
+            # Homebrew supports major.minor formulae like python@3.12
+            mm="${{ inputs.python_version }}"
+            mm="${mm%.*}"
+            brew install "python@${mm}"
+            PY_BIN="$(brew --prefix "python@${mm}")/bin/python3"
+            echo "PYTHON_BIN=${PY_BIN}" >> "$GITHUB_ENV"
+          else
+            brew install python
+            PY_BIN="$(brew --prefix python)/bin/python3"
+            echo "PYTHON_BIN=${PY_BIN}" >> "$GITHUB_ENV"
+          fi
+          test -x "$PY_BIN"
+
+      - name: Setup Python (Conda, default)
+        if: matrix.channel == 'conda' && inputs.python_version == ''
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          miniconda-version: "latest"
+          activate-environment: mt
+          auto-activate-base: false
+          channels: conda-forge
+
+      - name: Setup Python (Conda, pinned)
+        if: matrix.channel == 'conda' && inputs.python_version != ''
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          miniconda-version: "latest"
+          activate-environment: mt
+          python-version: ${{ inputs.python_version }}
+          auto-activate-base: false
+          channels: conda-forge
+
+      - name: Setup Python (Portable via uv)
+        if: matrix.channel == 'portable'
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Create venv (portable)
+        if: matrix.channel == 'portable'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [[ -n "${{ inputs.python_version }}" ]]; then
+            uv python install "${{ inputs.python_version }}"
+            uv venv --python "${{ inputs.python_version }}" .venv
+          else
+            uv python install
+            uv venv .venv
+          fi
+          echo "PYTHON_BIN=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Resolve Python executable (python-org)
+        if: matrix.channel == 'python-org'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "PYTHON_BIN=$(command -v python)" >> "$GITHUB_ENV"
+
+      - name: Resolve Python executable (conda)
+        if: matrix.channel == 'conda'
+        shell: bash -l {0}
+        run: |
+          set -euxo pipefail
+          python -c "import sys; print(sys.executable)"
+          echo "PYTHON_BIN=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+
+      - name: Show Python & pip
+        shell: bash
+        run: |
+          set -euxo pipefail
+          "$PYTHON_BIN" --version
+          "$PYTHON_BIN" -m pip --version || true
+
+      - name: Upgrade pip
+        shell: bash
+        run: |
+          set -euxo pipefail
+          "$PYTHON_BIN" -m ensurepip --upgrade || true
+          "$PYTHON_BIN" -m pip install -U pip setuptools wheel
+
+      - name: Install masktunnel (PyPI)
+        if: inputs.install_source == 'pypi'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if [[ -n "${{ inputs.masktunnel_version }}" ]]; then
+            "$PYTHON_BIN" -m pip install "masktunnel==${{ inputs.masktunnel_version }}"
+          else
+            "$PYTHON_BIN" -m pip install masktunnel
+          fi
+
+      - name: Install masktunnel (editable from repo)
+        if: inputs.install_source == 'editable'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          "$PYTHON_BIN" -m pip install -e _bindings/python
+
+      - name: Smoke test (import + start/stop)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          "$PYTHON_BIN" - <<'PY'
+          import time
+          from masktunnel import Server, ServerOptions, __version__
+
+          opts = ServerOptions(port="0")
+          srv = Server(options=opts)
+          srv.start_background()
+          addr = getattr(srv, "addr", "")
+          print("masktunnel", __version__, "addr=", addr)
+          time.sleep(0.2)
+          srv.stop()
+          srv.close()
+          print("ok")
+          PY

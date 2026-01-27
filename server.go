@@ -154,9 +154,12 @@ func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
 // handleSetProxy handles the internal API to set upstream proxy
 func (s *Server) handleSetProxy(w http.ResponseWriter, r *http.Request) {
 	// Read proxy URL from request body
-	body := make([]byte, 1024)
-	n, _ := r.Body.Read(body)
-	proxyURL := strings.TrimSpace(string(body[:n]))
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	proxyURL := strings.TrimSpace(string(bodyBytes))
 
 	// Update config
 	oldProxy := s.config.UpstreamProxy

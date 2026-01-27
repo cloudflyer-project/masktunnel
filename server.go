@@ -55,7 +55,7 @@ func NewServer(config *Config) *Server {
 
 // Start starts the proxy server
 func (s *Server) Start() error {
-	addr := s.config.Addr + ":" + s.config.Port
+	addr := net.JoinHostPort(s.config.Addr, s.config.Port)
 
 	// Create listener first to get the actual bound address (important when port is 0)
 	listener, err := net.Listen("tcp", addr)

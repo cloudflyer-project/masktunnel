@@ -80,7 +80,7 @@ func (h *ServerHandle) StartBackground() error {
 		return fmt.Errorf("server not initialized")
 	}
 
-	addr := h.s.config.Addr + ":" + h.s.config.Port
+	addr := net.JoinHostPort(h.s.config.Addr, h.s.config.Port)
 
 	// Create listener first to get the actual bound address
 	listener, err := net.Listen("tcp", addr)

@@ -37,10 +37,20 @@ func NewServer(config *Config) *Server {
 		logger = log.Logger
 	}
 
-	certManager, err := NewCertManager()
-	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to create certificate manager")
-		return nil
+	var certManager *CertManager
+	var err error
+	if config != nil && config.CertFile != "" && config.KeyFile != "" {
+		certManager, err = NewCertManagerFromFiles(config.CertFile, config.KeyFile)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("Failed to create certificate manager")
+			return nil
+		}
+	} else {
+		certManager, err = NewCertManager()
+		if err != nil {
+			logger.Fatal().Err(err).Msg("Failed to create certificate manager")
+			return nil
+		}
 	}
 
 	return &Server{

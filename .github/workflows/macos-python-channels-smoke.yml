@@ -122,6 +122,14 @@ jobs:
           python -c "import sys; print(sys.executable)"
           echo "PYTHON_BIN=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
 
+      - name: Create venv (brew/python-org)
+        if: matrix.channel == 'brew' || matrix.channel == 'python-org'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          "$PYTHON_BIN" -m venv .venv
+          echo "PYTHON_BIN=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
+
       - name: Show Python & pip
         shell: bash
         run: |

@@ -268,17 +268,29 @@ type bufferWriter struct {
 
 func (w *bufferWriter) Write(p []byte) (int, error) {
 	rawLine := strings.TrimSpace(string(p))
+	// Only add to buffer if the line is not empty
+	if rawLine == "" {
+		return len(p), nil
+	}
 	formattedLine := formatLogLine(rawLine)
 	addLogEntry(w.id, formattedLine)
 	return len(p), nil
 }
 
-// formatLogLine parses a JSON log line and formats it with all fields
+// formatLogLine parses a JSON log line and keeps it as JSON for Python to parse
+// This avoids double-formatting issues where both Go and Python format the same log
 func formatLogLine(line string) string {
 	// Try to parse as JSON
 	var logObj map[string]interface{}
 	if err := json.Unmarshal([]byte(line), &logObj); err != nil {
-		// If not valid JSON, return as-is
+		// If not valid JSON, wrap it in a simple JSON structure
+		simpleLog := map[string]interface{}{
+			"level":   "info",
+			"message": line,
+		}
+		if formatted, err := json.Marshal(simpleLog); err == nil {
+			return string(formatted)
+		}
 		return line
 	}
 
@@ -288,15 +300,8 @@ func formatLogLine(line string) string {
 	if message == "" {
 		message, _ = logObj["msg"].(string)
 	}
-	timestamp, _ := logObj["time"].(string)
 
-	// Build the formatted message starting with the basic message
-	var parts []string
-	if message != "" {
-		parts = append(parts, message)
-	}
-
-	// Collect other fields (excluding standard fields)
+	// Collect extra fields (excluding standard fields) and append to message
 	var extraFields []string
 	for key, value := range logObj {
 		switch key {
@@ -312,25 +317,21 @@ func formatLogLine(line string) string {
 	// Sort extra fields for consistent output
 	sort.Strings(extraFields)
 
-	// Append extra fields to the message
+	// Build the final message with extra fields
+	finalMessage := message
 	if len(extraFields) > 0 {
-		if len(parts) > 0 {
-			parts = append(parts, strings.Join(extraFields, " "))
+		if finalMessage != "" {
+			finalMessage += " " + strings.Join(extraFields, " ")
 		} else {
-			parts = extraFields
+			finalMessage = strings.Join(extraFields, " ")
 		}
 	}
 
-	// Build the final formatted line
-	finalMessage := strings.Join(parts, " ")
-
-	// Create a simple structured log object for Python
+	// Return a clean JSON structure for Python to parse
+	// Don't include timestamp here - let Python add its own
 	result := map[string]interface{}{
 		"level":   level,
 		"message": finalMessage,
-	}
-	if timestamp != "" {
-		result["time"] = timestamp
 	}
 
 	// Convert back to JSON for Python to parse

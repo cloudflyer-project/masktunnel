@@ -36,20 +36,25 @@ _def_level_map = {
 
 
 def _emit_go_log(py_logger: logging.Logger, line: str) -> None:
-    """Process a Go log line and emit it to the Python logger."""
+    """Process a Go log line and emit it to the Python logger.
+    
+    Note: This function only emits logs once. The Go side sends JSON-formatted
+    logs through the buffer, and we parse and emit them here. We don't include
+    extra fields in the main message to avoid duplication.
+    """
     try:
         obj = json.loads(line)
     except Exception:
+        # If not valid JSON, log as-is
         py_logger.info(line)
         return
+    
     level = str(obj.get("level", "")).lower()
     message = obj.get("message") or obj.get("msg") or ""
-    extras: Dict[str, Any] = {}
-    for k, v in obj.items():
-        if k in ("level", "time", "message", "msg"):
-            continue
-        extras[k] = v
-    py_logger.log(_def_level_map.get(level, logging.INFO), message, extra={"go": extras})
+    
+    # Don't extract extra fields - they're already included in the message by Go's formatLogLine
+    # This prevents duplicate field output
+    py_logger.log(_def_level_map.get(level, logging.INFO), message)
 
 
 # Global registry for logger instances

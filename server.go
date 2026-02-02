@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -37,10 +38,20 @@ func NewServer(config *Config) *Server {
 		logger = log.Logger
 	}
 
-	certManager, err := NewCertManager()
-	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to create certificate manager")
-		return nil
+	var certManager *CertManager
+	var err error
+	if config != nil && config.CertFile != "" && config.KeyFile != "" {
+		certManager, err = NewCertManagerFromFiles(config.CertFile, config.KeyFile)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("Failed to create certificate manager")
+			return nil
+		}
+	} else {
+		certManager, err = NewCertManager()
+		if err != nil {
+			logger.Fatal().Err(err).Msg("Failed to create certificate manager")
+			return nil
+		}
 	}
 
 	return &Server{
@@ -55,7 +66,7 @@ func NewServer(config *Config) *Server {
 
 // Start starts the proxy server
 func (s *Server) Start() error {
-	addr := s.config.Addr + ":" + s.config.Port
+	addr := net.JoinHostPort(s.config.Addr, s.config.Port)
 
 	// Create listener first to get the actual bound address (important when port is 0)
 	listener, err := net.Listen("tcp", addr)
@@ -144,9 +155,12 @@ func (s *Server) handleResetSessions(w http.ResponseWriter, r *http.Request) {
 // handleSetProxy handles the internal API to set upstream proxy
 func (s *Server) handleSetProxy(w http.ResponseWriter, r *http.Request) {
 	// Read proxy URL from request body
-	body := make([]byte, 1024)
-	n, _ := r.Body.Read(body)
-	proxyURL := strings.TrimSpace(string(body[:n]))
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	proxyURL := strings.TrimSpace(string(bodyBytes))
 
 	// Update config
 	oldProxy := s.config.UpstreamProxy
@@ -221,9 +235,35 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Proxy:           http.ProxyFromEnvironment,
+	}
+	if s.config.UpstreamProxy != "" {
+		if proxyURL, err := url.Parse(s.config.UpstreamProxy); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
 	}
 
-	outReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body)
+	outReqURL := r.URL
+	if !outReqURL.IsAbs() {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		host := r.Host
+		if host == "" {
+			host = outReqURL.Host
+		}
+		outReqURL = &url.URL{
+			Scheme:   scheme,
+			Host:     host,
+			Path:     outReqURL.Path,
+			RawPath:  outReqURL.RawPath,
+			RawQuery: outReqURL.RawQuery,
+			Fragment: outReqURL.Fragment,
+		}
+	}
+
+	outReq, err := http.NewRequest(r.Method, outReqURL.String(), r.Body)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
@@ -386,9 +426,35 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 	// Create upstream request
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Proxy:           http.ProxyFromEnvironment,
+	}
+	if s.config.UpstreamProxy != "" {
+		if proxyURL, err := url.Parse(s.config.UpstreamProxy); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
 	}
 
-	outReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body)
+	outReqURL := r.URL
+	if !outReqURL.IsAbs() {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		host := r.Host
+		if host == "" {
+			host = outReqURL.Host
+		}
+		outReqURL = &url.URL{
+			Scheme:   scheme,
+			Host:     host,
+			Path:     outReqURL.Path,
+			RawPath:  outReqURL.RawPath,
+			RawQuery: outReqURL.RawQuery,
+			Fragment: outReqURL.Fragment,
+		}
+	}
+
+	outReq, err := http.NewRequest(r.Method, outReqURL.String(), r.Body)
 	if err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
@@ -410,12 +476,16 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
+	defer func() {
+		// If we didn't successfully switch protocols, ensure response body is closed.
+		if resp.StatusCode != http.StatusSwitchingProtocols {
+			_ = resp.Body.Close()
+		}
+	}()
 
 	// Check if upstream accepted the WebSocket upgrade
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		s.logger.Error().Int("status", resp.StatusCode).Msg("Upstream rejected WebSocket upgrade")
-		defer resp.Body.Close()
-
 		// Forward the rejection response
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
@@ -423,24 +493,35 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Copy response headers for successful upgrade
-	removeHopByHopHeadersExceptWebSocket(resp.Header)
-	copyHeaders(w.Header(), resp.Header)
-	w.WriteHeader(http.StatusSwitchingProtocols)
-
-	// Get the hijacker to access raw connections
+	// Get the hijacker to access raw connections BEFORE writing response
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 
-	clientConn, _, err := hijacker.Hijack()
+	clientConn, clientBuf, err := hijacker.Hijack()
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to hijack client connection")
 		return
 	}
 	defer clientConn.Close()
+
+	// Build and send the 101 response manually after hijacking
+	removeHopByHopHeadersExceptWebSocket(resp.Header)
+	var respBuilder strings.Builder
+	respBuilder.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+	for key, values := range resp.Header {
+		for _, value := range values {
+			respBuilder.WriteString(key)
+			respBuilder.WriteString(": ")
+			respBuilder.WriteString(value)
+			respBuilder.WriteString("\r\n")
+		}
+	}
+	respBuilder.WriteString("\r\n")
+	clientBuf.WriteString(respBuilder.String())
+	clientBuf.Flush()
 
 	// Get the upstream connection
 	upstreamConn, ok := resp.Body.(io.ReadWriteCloser)

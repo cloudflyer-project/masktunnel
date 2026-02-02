@@ -110,6 +110,43 @@ The fingerprints returned should be different for each browser.
 | `-key` | TLS key file | `key.pem` |
 | `-verbose` | Enable verbose logging | `0` |
 
+## Internal Control API
+
+MaskTunnel does not start a separate API server. Instead, it exposes internal control endpoints through the proxy server itself (default port `8080`).
+
+### Reset TLS Sessions
+
+Reset all active TLS sessions:
+
+```bash
+curl -X POST http://localhost:8080/__masktunnel__/reset
+```
+
+Response:
+```json
+{"success":true,"closed_sessions":5}
+```
+
+### Set Upstream Proxy
+
+Dynamically change the upstream proxy at runtime:
+
+```bash
+curl -X POST http://localhost:8080/__masktunnel__/proxy \
+     -d "http://new-upstream:8080"
+```
+
+Response:
+```json
+{"success":true,"proxy":"http://new-upstream:8080","closed_sessions":3}
+```
+
+To remove the upstream proxy, send an empty body:
+
+```bash
+curl -X POST http://localhost:8080/__masktunnel__/proxy -d ""
+```
+
 ## Trusting the Certificate
 
 MaskTunnel acts as a MITM (Man-in-the-Middle) proxy to intercept and modify HTTPS traffic. By default, it generates a self-signed certificate that browsers and tools will not trust, requiring the `-k` flag in curl or similar options in other clients.

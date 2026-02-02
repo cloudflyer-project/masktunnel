@@ -7,8 +7,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -29,6 +32,34 @@ func NewCertManager() (*CertManager, error) {
 
 	err := cm.generateCA()
 	if err != nil {
+		return nil, err
+	}
+
+	return cm, nil
+}
+
+// NewCertManagerFromFiles creates a certificate manager and loads the CA
+// certificate/key from disk when possible. If files are missing, it generates
+// a new CA and persists it to the provided paths.
+func NewCertManagerFromFiles(certFile, keyFile string) (*CertManager, error) {
+	cm := &CertManager{
+		cache: make(map[string]*tls.Certificate),
+	}
+
+	if certFile == "" || keyFile == "" {
+		return nil, errors.New("cert file and key file must both be provided")
+	}
+
+	if err := cm.loadCAFromFiles(certFile, keyFile); err == nil {
+		return cm, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	if err := cm.generateCA(); err != nil {
+		return nil, err
+	}
+	if err := cm.saveCAToFiles(certFile, keyFile); err != nil {
 		return nil, err
 	}
 
@@ -76,6 +107,82 @@ func (cm *CertManager) generateCA() error {
 
 	cm.caCert = caCert
 	cm.caKey = caKey
+
+	return nil
+}
+
+func (cm *CertManager) loadCAFromFiles(certFile, keyFile string) error {
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return err
+	}
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return err
+	}
+
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil || certBlock.Type != "CERTIFICATE" {
+		return errors.New("failed to decode CA certificate PEM")
+	}
+	caCert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return err
+	}
+
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		return errors.New("failed to decode CA private key PEM")
+	}
+
+	var caKey *rsa.PrivateKey
+	switch keyBlock.Type {
+	case "RSA PRIVATE KEY":
+		k, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+		if err != nil {
+			return err
+		}
+		caKey = k
+	case "PRIVATE KEY":
+		kAny, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+		if err != nil {
+			return err
+		}
+		k, ok := kAny.(*rsa.PrivateKey)
+		if !ok {
+			return errors.New("unsupported CA private key type")
+		}
+		caKey = k
+	default:
+		return errors.New("unsupported CA private key PEM type")
+	}
+
+	cm.caCert = caCert
+	cm.caKey = caKey
+	return nil
+}
+
+func (cm *CertManager) saveCAToFiles(certFile, keyFile string) error {
+	if cm == nil || cm.caCert == nil || cm.caKey == nil {
+		return errors.New("CA not initialized")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(certFile), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(keyFile), 0o755); err != nil {
+		return err
+	}
+
+	certOut := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cm.caCert.Raw})
+	keyOut := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(cm.caKey)})
+
+	if err := os.WriteFile(certFile, certOut, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(keyFile, keyOut, 0o600); err != nil {
+		return err
+	}
 
 	return nil
 }

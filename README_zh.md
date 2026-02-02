@@ -108,6 +108,43 @@ curl -k -x http://localhost:8080 \
 | `-key` | TLS 密钥文件 | `key.pem` |
 | `-verbose` | 启用详细日志 | `0` |
 
+## 内部控制 API
+
+MaskTunnel 不会启动独立的 API 服务器。它通过代理服务器本身（默认端口 `8080`）暴露内部控制端点。
+
+### 重置 TLS 会话
+
+重置所有活动的 TLS 会话：
+
+```bash
+curl -X POST http://localhost:8080/__masktunnel__/reset
+```
+
+响应：
+```json
+{"success":true,"closed_sessions":5}
+```
+
+### 设置上游代理
+
+在运行时动态更改上游代理：
+
+```bash
+curl -X POST http://localhost:8080/__masktunnel__/proxy \
+     -d "http://new-upstream:8080"
+```
+
+响应：
+```json
+{"success":true,"proxy":"http://new-upstream:80","closed_sessions":3}
+```
+
+要移除上游代理，发送空请求体：
+
+```bash
+curl -X POST http://localhost:8080/__masktunnel__/proxy -d ""
+```
+
 ## 信任证书
 
 MaskTunnel 作为 MITM（中间人）代理来拦截和修改 HTTPS 流量。默认情况下，它会生成一个自签名证书，浏览器和工具不会信任该证书，因此需要在 curl 中使用 `-k` 参数或在其他客户端中使用类似选项。

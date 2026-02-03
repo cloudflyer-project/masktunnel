@@ -244,9 +244,16 @@ def build_cffi_library():
     
     try:
         run_command(
-            ["go", "build", "-buildmode=c-shared", "-o", str(output_lib), "."],
-            cwd=ffi_src_dir,
-            env=env
+            [
+                "go",
+                "build",
+                "-buildmode=c-shared",
+                "-o",
+                str(output_lib),
+                "./masktunnel_go_ffi",
+            ],
+            cwd=here,
+            env=env,
         )
         
         print(f"Successfully built {output_lib}")
@@ -255,8 +262,11 @@ def build_cffi_library():
         h_file = output_dir / lib_name.replace(".so", ".h").replace(".dylib", ".h").replace(".dll", ".h")
         if h_file.exists():
             h_file.unlink()
-    finally:
-        cleanup_temp_go()
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to build masktunnel shared library: {e}\n"
+            "Use a pre-built wheel, or ensure Go 1.21+ is installed."
+        )
 
 
 class BuildPyWithCFFI(_build_py):

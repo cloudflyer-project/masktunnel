@@ -205,13 +205,13 @@ def build_cffi_library():
     # Determine output library name
     goos = os.environ.get("GOOS", platform.system().lower())
     if goos == "darwin":
-        lib_name = "libmasktunnel.dylib"
+        lib_name = "libmasktunnel_ffi.dylib"
     elif goos == "windows":
-        lib_name = "masktunnel.dll"
+        lib_name = "masktunnel_ffi.dll"
     else:
-        lib_name = "libmasktunnel.so"
+        lib_name = "libmasktunnel_ffi.so"
     
-    output_dir = here / "masktunnel"
+    output_dir = here / "masktunnel_ffi"
     output_lib = output_dir / lib_name
     
     # Check if library already exists (e.g., from pre-built wheel or previous build)

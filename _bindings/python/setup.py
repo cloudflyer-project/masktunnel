@@ -139,17 +139,9 @@ class DevelopWithCFFI(_develop):
         super().run()
 
 
-# Read version from __init__.py
-version = {}
-with open(here / "masktunnel" / "__init__.py") as f:
-    for line in f:
-        if line.startswith("__version__"):
-            exec(line, version)
-            break
-
 setup(
     name="masktunnel",
-    version=version.get("__version__", "0.0.0"),
+    version="1.1.0",
     description="HTTP MITM proxy with browser fingerprinting (CFFI backend)",
     long_description=(here / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",

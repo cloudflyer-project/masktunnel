@@ -101,7 +101,7 @@ func masktunnel_buf_free(b C.masktunnel_buf) {
 
 //export masktunnel_version
 func masktunnel_version() *C.char {
-	return cstr("1.0.21")
+	return cstr(masktunnel.Version)
 }
 
 //export masktunnel_seconds

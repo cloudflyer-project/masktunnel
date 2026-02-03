@@ -15,15 +15,15 @@ import (
 // ServerOption describes server configuration for bindings.
 // Keep fields as basic types to ensure gopy can map them.
 type ServerOption struct {
-	Addr          string `json:"addr"`
-	Port          string `json:"port"`
-	UserAgent     string `json:"user_agent"`
-	Payload       string `json:"payload"`
-	UpstreamProxy string `json:"upstream_proxy"`
-	Username      string `json:"username"`
-	Password      string `json:"password"`
-	Verbose       int    `json:"verbose"`
-	LoggerID      string `json:"logger_id"`
+	Addr          string          `json:"addr"`
+	Port          string          `json:"port"`
+	UserAgent     string          `json:"user_agent"`
+	Payload       string          `json:"payload"`
+	UpstreamProxy string          `json:"upstream_proxy"`
+	Username      string          `json:"username"`
+	Password      string          `json:"password"`
+	Verbose       int             `json:"verbose"`
+	LoggerID      string          `json:"logger_id"`
 	logger        *zerolog.Logger // internal, set via WithLogger
 }
 

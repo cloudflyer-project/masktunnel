@@ -70,26 +70,34 @@ class TestServer:
 
 
 class TestServerOptions:
-    """Test Server creation with custom options."""
+    """Test ServerOptions functionality."""
 
-    def test_server_with_custom_port(self):
-        """Test Server creation with custom port."""
-        from masktunnel import Server
-        
-        server = Server(port=9090, verbose=True)
-        assert server is not None
-        server.stop()
+    def test_server_options_creation(self):
+        """Test that ServerOptions can be created."""
+        from masktunnel._server import ServerOptions
+        options = ServerOptions()
+        assert options is not None
 
-    def test_server_with_multiple_options(self):
-        """Test Server creation with multiple options."""
+    def test_server_options_defaults(self):
+        """Test ServerOptions default values."""
+        from masktunnel._server import ServerOptions
+        options = ServerOptions()
+        assert options.addr == ""
+        assert options.port == "8080"
+        assert options.user_agent == ""
+        assert options.payload == ""
+        assert options.upstream_proxy == ""
+        assert options.username == ""
+        assert options.password == ""
+        assert options.verbose == 0
+
+    def test_server_with_options(self):
+        """Test Server creation with custom options."""
         from masktunnel import Server
+        from masktunnel._server import ServerOptions
         
-        server = Server(
-            addr="127.0.0.1",
-            port=9091,
-            user_agent="TestAgent/1.0",
-            verbose=True
-        )
+        options = ServerOptions(port="9090", verbose=1)
+        server = Server(options=options)
         assert server is not None
         server.stop()
 

@@ -136,13 +136,13 @@ class _FFIRawServer:
     def Addr(self) -> str:
         return self._srv.addr()
 
-    def ResetSessions(self) -> None:
-        self._srv.reset_sessions()
+    def ResetSessions(self) -> int:
+        return self._srv.reset_sessions()
 
     def SetUpstreamProxy(self, proxy: str) -> None:
         self._srv.set_upstream_proxy(proxy)
 
-    def GetCAPEM(self) -> str:
+    def GetCAPEM(self) -> bytes:
         return self._srv.get_ca_pem()
 
 

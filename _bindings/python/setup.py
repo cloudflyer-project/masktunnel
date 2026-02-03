@@ -296,8 +296,7 @@ setup(
     url="https://github.com/cloudflyer-project/masktunnel",
     packages=find_packages(exclude=["tests", "tests.*"]),
     package_data={
-        "masktunnel": ["*.so", "*.dylib", "*.dll", "*.h"],
-        "masktunnel_ffi": [],
+        "masktunnel_ffi": ["*.so", "*.dylib", "*.dll", "*.h"],
     },
     python_requires=">=3.9",
     install_requires=install_requires,

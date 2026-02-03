@@ -43,11 +43,11 @@ _ffi.cdef(
 
 def _detect_lib_name() -> str:
     if sys.platform.startswith("linux"):
-        return "libmasktunnel.so"
+        return "libmasktunnel_ffi.so"
     if sys.platform == "darwin":
-        return "libmasktunnel.dylib"
+        return "libmasktunnel_ffi.dylib"
     if os.name == "nt":
-        return "masktunnel.dll"
+        return "masktunnel_ffi.dll"
     return "libmasktunnel_ffi.so"
 
 

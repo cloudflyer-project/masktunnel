@@ -11,17 +11,17 @@ PYBIN ?= python3
 PIP ?= $(PYBIN) -m pip
 
 # CFFI (Go c-shared) output
-PYTHON_CFFI_DIR = $(PYTHON_OUTPUT_DIR)/masktunnel
+PYTHON_CFFI_DIR = $(PYTHON_OUTPUT_DIR)/masktunnel_ffi
 PYTHON_CFFI_SHIM = $(PYTHON_OUTPUT_DIR)/masktunnel_go_ffi
 PYTHON_CFFI_GO_PKG = ./$(PYTHON_CFFI_SHIM)
 
 GOOS ?= $(shell go env GOOS)
 ifeq ($(GOOS),darwin)
-PYTHON_CFFI_LIB = $(PYTHON_CFFI_DIR)/libmasktunnel.dylib
+PYTHON_CFFI_LIB = $(PYTHON_CFFI_DIR)/libmasktunnel_ffi.dylib
 else ifeq ($(GOOS),windows)
-PYTHON_CFFI_LIB = $(PYTHON_CFFI_DIR)/masktunnel.dll
+PYTHON_CFFI_LIB = $(PYTHON_CFFI_DIR)/masktunnel_ffi.dll
 else
-PYTHON_CFFI_LIB = $(PYTHON_CFFI_DIR)/libmasktunnel.so
+PYTHON_CFFI_LIB = $(PYTHON_CFFI_DIR)/libmasktunnel_ffi.so
 endif
 
 # Default target
@@ -58,8 +58,8 @@ python-cffi-build:
 		$(PYTHON_OUTPUT_DIR)/masktunnellib/_masktunnellib*.h 2>/dev/null || true
 
 python-cffi-clean:
-	rm -f $(PYTHON_CFFI_DIR)/libmasktunnel.so $(PYTHON_CFFI_DIR)/libmasktunnel.dylib $(PYTHON_CFFI_DIR)/masktunnel.dll
-	rm -f $(PYTHON_CFFI_DIR)/libmasktunnel.h
+	rm -f $(PYTHON_CFFI_DIR)/libmasktunnel_ffi.so $(PYTHON_CFFI_DIR)/libmasktunnel_ffi.dylib $(PYTHON_CFFI_DIR)/masktunnel_ffi.dll
+	rm -f $(PYTHON_CFFI_DIR)/libmasktunnel_ffi.h
 
 python-clean: python-cffi-clean
 	rm -rf $(PYTHON_OUTPUT_DIR)/masktunnel.egg-info

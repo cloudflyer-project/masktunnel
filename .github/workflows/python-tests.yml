@@ -70,12 +70,8 @@ jobs:
 
           ffi_dir = pathlib.Path(masktunnel_ffi.__file__).resolve().parent
           names = [p.name for p in ffi_dir.iterdir()]
-          # Check for shared library in masktunnel/ directory
-          masktunnel_dir = ffi_dir.parent / "masktunnel"
-          if masktunnel_dir.exists():
-              names.extend([p.name for p in masktunnel_dir.iterdir()])
           assert any(
-              (n.endswith((".so", ".dylib", ".dll")) and "masktunnel" in n)
+              (n.endswith((".so", ".dylib", ".dll")) and "masktunnel_ffi" in n)
               for n in names
           ), names
           print("ffi_ok", L.version())

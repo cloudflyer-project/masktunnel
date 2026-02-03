@@ -141,7 +141,7 @@ class DevelopWithCFFI(_develop):
 
 setup(
     name="masktunnel",
-    version="1.1.0",
+    version="1.0.21",
     description="HTTP MITM proxy with browser fingerprinting (CFFI backend)",
     long_description=(here / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",

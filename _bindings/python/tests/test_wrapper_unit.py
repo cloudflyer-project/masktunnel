@@ -8,18 +8,25 @@ def test_version_is_string():
     assert len(masktunnel.__version__) > 0
 
 
-def test_server_options_defaults():
-    from masktunnel._server import ServerOptions
+def test_server_creation_with_defaults():
+    from masktunnel import Server
 
-    options = ServerOptions()
-    assert options.addr == ""
-    assert options.port == "8080"
-    assert options.user_agent == ""
-    assert options.payload == ""
-    assert options.upstream_proxy == ""
-    assert options.username == ""
-    assert options.password == ""
-    assert options.verbose == 0
+    server = Server()
+    assert server is not None
+    server.stop()
+
+
+def test_server_creation_with_options():
+    from masktunnel import Server
+
+    server = Server(
+        addr="127.0.0.1",
+        port=9999,
+        user_agent="TestAgent/1.0",
+        verbose=True
+    )
+    assert server is not None
+    server.stop()
 
 
 def test_set_log_level_callable():

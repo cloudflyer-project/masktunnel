@@ -125,21 +125,13 @@ class Server:
         """Stop the server asynchronously."""
         await asyncio.to_thread(self._raw.Stop)
 
-    def reset_sessions(self) -> int:
-        """Reset all active sessions.
-        
-        Returns:
-            Number of sessions that were reset
-        """
-        return self._raw.ResetSessions()
+    def reset_sessions(self) -> None:
+        """Reset all active sessions."""
+        self._raw.ResetSessions()
 
-    async def async_reset_sessions(self) -> int:
-        """Reset all active sessions asynchronously.
-        
-        Returns:
-            Number of sessions that were reset
-        """
-        return await asyncio.to_thread(self._raw.ResetSessions)
+    async def async_reset_sessions(self) -> None:
+        """Reset all active sessions asynchronously."""
+        await asyncio.to_thread(self._raw.ResetSessions)
 
     def set_upstream_proxy(self, proxy_url: str) -> None:
         """Set upstream proxy for the server.

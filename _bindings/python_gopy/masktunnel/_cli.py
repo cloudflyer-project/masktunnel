@@ -56,7 +56,7 @@ def server(
     verbose: int,
 ):
     """Start MaskTunnel proxy server."""
-    from ._server import Server
+    from ._server import Server, ServerOptions
 
     # Setup logging
     if verbose == 0:
@@ -68,16 +68,18 @@ def server(
     
     init_logging(level=log_level)
 
-    srv = Server(
+    options = ServerOptions(
         addr=addr,
-        port=int(port) if port else 8080,
-        username=username or None,
-        password=password or None,
-        payload=payload or None,
-        upstream_proxy=upstream_proxy or None,
-        user_agent=user_agent or None,
-        verbose=verbose > 0,
+        port=port,
+        username=username,
+        password=password,
+        payload=payload,
+        upstream_proxy=upstream_proxy,
+        user_agent=user_agent,
+        verbose=verbose,
     )
+
+    srv = Server(options=options)
     
     logger.info(f"MaskTunnel proxy server running on {srv.addr}")
     logger.info("Press Ctrl+C to stop")

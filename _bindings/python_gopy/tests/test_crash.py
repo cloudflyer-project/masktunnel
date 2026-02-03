@@ -70,25 +70,25 @@ def _safe_stop_close(server) -> None:
 
 @pytest.mark.crash
 def test_server_init_invalid_options_does_not_segfault():
-    from masktunnel._server import Server
+    from masktunnel._server import Server, ServerOptions
 
     # Invalid types should raise Python exceptions or be coerced safely,
     # but must not crash the interpreter.
     bad_opts = [
-        {"port": 123},
-        {"addr": 123},
-        {"username": None},
-        {"password": None},
-        {"payload": None},
-        {"user_agent": None},
-        {"upstream_proxy": None},
-        {"verbose": "1"},
+        ServerOptions(port=123),
+        ServerOptions(addr=123),
+        ServerOptions(username=None),
+        ServerOptions(password=None),
+        ServerOptions(payload=None),
+        ServerOptions(user_agent=None),
+        ServerOptions(upstream_proxy=None),
+        ServerOptions(verbose="1"),
     ]
 
     for opt in bad_opts:
         server = None
         try:
-            server = Server(**opt)
+            server = Server(options=opt)
         except Exception:
             continue
         finally:
@@ -98,7 +98,7 @@ def test_server_init_invalid_options_does_not_segfault():
 
 @pytest.mark.crash
 def test_server_init_options_invalid_strings_no_crash():
-    from masktunnel._server import Server
+    from masktunnel._server import Server, ServerOptions
 
     invalid = InvalidInputs.invalid_strings()
     fields = [
@@ -116,7 +116,8 @@ def test_server_init_options_invalid_strings_no_crash():
             server = None
             try:
                 kwargs = {field: v}
-                server = Server(**kwargs)  # type: ignore[arg-type]
+                opt = ServerOptions(**kwargs)  # type: ignore[arg-type]
+                server = Server(options=opt)
                 try:
                     server.get_ca_pem()
                 except Exception:
@@ -134,12 +135,13 @@ def test_server_init_options_invalid_strings_no_crash():
 
 @pytest.mark.crash
 def test_server_init_options_invalid_verbose_no_crash():
-    from masktunnel._server import Server
+    from masktunnel._server import Server, ServerOptions
 
     for v in InvalidInputs.invalid_ints():
         server = None
         try:
-            server = Server(verbose=v)  # type: ignore[arg-type]
+            opt = ServerOptions(verbose=v)  # type: ignore[arg-type]
+            server = Server(options=opt)
         except Exception:
             pass
         finally:
@@ -237,10 +239,10 @@ def test_stop_close_idempotent_no_crash():
 
 @pytest.mark.crash
 def test_start_stop_basic_lifecycle_no_crash():
-    from masktunnel._server import Server
+    from masktunnel._server import Server, ServerOptions
 
     port = _get_free_port()
-    server = Server(addr="127.0.0.1", port=port)
+    server = Server(options=ServerOptions(addr="127.0.0.1", port=str(port)))
 
     thread = threading.Thread(target=server.start, daemon=True)
     thread.start()
@@ -253,7 +255,7 @@ def test_start_stop_basic_lifecycle_no_crash():
 
 @pytest.mark.crash
 def test_start_on_port_in_use_no_crash():
-    from masktunnel._server import Server
+    from masktunnel._server import Server, ServerOptions
 
     host = "127.0.0.1"
     port = _get_free_port()
@@ -262,7 +264,7 @@ def test_start_on_port_in_use_no_crash():
     listener.bind((host, port))
     listener.listen(1)
 
-    server = Server(addr=host, port=port)
+    server = Server(options=ServerOptions(addr=host, port=str(port)))
     err_holder: list[BaseException] = []
 
     def _run() -> None:

@@ -350,19 +350,21 @@ def start_proxy(tmp_path: Path) -> Callable[..., dict]:
         verbose: int = 0,
     ) -> dict:
         from masktunnel import Server
+        from masktunnel._server import ServerOptions
 
         host = "127.0.0.1"
         port = _get_free_port()
 
-        server = Server(
+        options = ServerOptions(
             addr=host,
-            port=port,
-            username=username or None,
-            password=password or None,
-            payload=payload or None,
-            user_agent=user_agent or None,
-            verbose=verbose > 0,
+            port=str(port),
+            username=username,
+            password=password,
+            payload=payload,
+            user_agent=user_agent,
+            verbose=verbose,
         )
+        server = Server(options=options)
 
         # Persist CA for requests verification.
         ca_path = tmp_path / f"masktunnel_ca_{port}.pem"

@@ -1,6 +1,7 @@
 package masktunnel
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -263,17 +264,48 @@ func SetLoggerGlobalLevel(level zerolog.Level) {
 
 // bufferWriter writes log lines to the global buffer
 type bufferWriter struct {
-	id string
+	id  string
+	mu  sync.Mutex
+	buf []byte
 }
 
 func (w *bufferWriter) Write(p []byte) (int, error) {
-	rawLine := strings.TrimSpace(string(p))
-	// Only add to buffer if the line is not empty
-	if rawLine == "" {
-		return len(p), nil
+	if len(p) == 0 {
+		return 0, nil
 	}
-	formattedLine := formatLogLine(rawLine)
-	addLogEntry(w.id, formattedLine)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// zerolog writes one event per line (ending with '\n'), but Write calls are
+	// not guaranteed to align with lines. Buffer until we see a newline.
+	w.buf = append(w.buf, p...)
+
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := string(w.buf[:i])
+		w.buf = w.buf[i+1:]
+
+		rawLine := strings.TrimSpace(line)
+		if rawLine == "" {
+			continue
+		}
+		// Keep the original zerolog JSON line; Python formats it for CLI output.
+		addLogEntry(w.id, rawLine)
+	}
+
+	// Safety valve: avoid unbounded growth if something writes without newlines.
+	if len(w.buf) > 1024*1024 {
+		rawLine := strings.TrimSpace(string(w.buf))
+		if rawLine != "" {
+			addLogEntry(w.id, rawLine)
+		}
+		w.buf = w.buf[:0]
+	}
+
 	return len(p), nil
 }
 

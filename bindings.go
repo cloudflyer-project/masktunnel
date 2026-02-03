@@ -15,14 +15,15 @@ import (
 // ServerOption describes server configuration for bindings.
 // Keep fields as basic types to ensure gopy can map them.
 type ServerOption struct {
-	Addr          string
-	Port          string
-	UserAgent     string
-	Payload       string
-	UpstreamProxy string
-	Username      string
-	Password      string
-	Verbose       int
+	Addr          string `json:"addr"`
+	Port          string `json:"port"`
+	UserAgent     string `json:"user_agent"`
+	Payload       string `json:"payload"`
+	UpstreamProxy string `json:"upstream_proxy"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	Verbose       int    `json:"verbose"`
+	LoggerID      string `json:"logger_id"`
 	logger        *zerolog.Logger // internal, set via WithLogger
 }
 
@@ -50,6 +51,25 @@ func NewServerHandle(opt *ServerOption) *ServerHandle {
 	if opt == nil {
 		opt = DefaultServerOption()
 	}
+	// Map bindings verbosity to zerolog global level.
+	// 0=warn, 1=info, 2=debug, 3+=trace.
+	switch {
+	case opt.Verbose >= 3:
+		zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	case opt.Verbose == 2:
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case opt.Verbose == 1:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	}
+	var cfgLogger *zerolog.Logger
+	if opt.logger != nil {
+		cfgLogger = opt.logger
+	} else if opt.LoggerID != "" {
+		l := NewLoggerWithID(opt.LoggerID)
+		cfgLogger = &l
+	}
 	cfg := &Config{
 		Addr:          opt.Addr,
 		Port:          opt.Port,
@@ -59,7 +79,7 @@ func NewServerHandle(opt *ServerOption) *ServerHandle {
 		Username:      opt.Username,
 		Password:      opt.Password,
 		Verbose:       opt.Verbose,
-		Logger:        opt.logger,
+		Logger:        cfgLogger,
 	}
 	return &ServerHandle{s: NewServer(cfg)}
 }

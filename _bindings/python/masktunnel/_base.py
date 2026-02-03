@@ -69,9 +69,7 @@ class _DummyManagedLogger:
 
 
 def _json_key(snake: str) -> str:
-    """Convert snake_case to Go's PascalCase for JSON keys."""
-    parts = snake.split("_")
-    return "".join(p.capitalize() for p in parts if p)
+    return snake
 
 
 class _FFIServerOption:
@@ -213,13 +211,41 @@ def _emit_go_log(py_logger: logging.Logger, line: str) -> None:
     except Exception:
         py_logger.info(line)
         return
+
+    if not isinstance(obj, dict):
+        py_logger.info(str(obj))
+        return
+
     level = str(obj.get("level", "")).lower()
     message = obj.get("message") or obj.get("msg") or ""
+    if message is None:
+        message = ""
+    message = str(message)
+
     extras: Dict[str, Any] = {}
     for k, v in obj.items():
         if k in ("level", "time", "message", "msg"):
             continue
         extras[k] = v
+
+    if extras:
+        parts: List[str] = []
+        for k in sorted(extras.keys()):
+            v = extras.get(k)
+            if v is None:
+                continue
+            if isinstance(v, (dict, list)):
+                try:
+                    v_str = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+                except Exception:
+                    v_str = str(v)
+            else:
+                v_str = str(v)
+            parts.append(f"{k}={v_str}")
+        if parts:
+            suffix = " ".join(parts)
+            message = f"{message} {suffix}".strip()
+
     py_logger.log(_def_level_map.get(level, logging.INFO), message, extra={"go": extras})
 
 

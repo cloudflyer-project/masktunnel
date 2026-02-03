@@ -1,14 +1,13 @@
-"""
-Command-line interface for masktunnel.
+"""Command-line interface for masktunnel.
 
 This module provides CLI commands for the masktunnel proxy tool.
 """
 
+import asyncio
 import logging
 import platform
-import signal
 import sys
-import threading
+from typing import Optional
 
 import click
 from loguru import logger
@@ -44,7 +43,7 @@ def version():
 @click.option("--payload", "-j", default="", help="JavaScript to inject into responses")
 @click.option("--upstream-proxy", "-x", default="", help="Upstream proxy URL")
 @click.option("--user-agent", "-U", default="", help="Override User-Agent header")
-@click.option("--verbose", "-v", count=True, help="Verbose logging (-v for info, -vv for debug)")
+@click.option("--verbose", "-v", count=True, help="Verbose logging (-v for debug, -vv for more)")
 def server(
     port: str,
     addr: str,
@@ -58,11 +57,11 @@ def server(
     """Start MaskTunnel proxy server."""
     from ._server import Server
 
-    # Setup logging
+    # Setup logging (match linksocks behavior: show startup info by default)
     if verbose == 0:
-        log_level = logging.WARNING
-    elif verbose == 1:
         log_level = logging.INFO
+    elif verbose == 1:
+        log_level = logging.DEBUG
     else:
         log_level = logging.DEBUG
     
@@ -78,37 +77,20 @@ def server(
         user_agent=user_agent or None,
         verbose=verbose > 0,
     )
-    
-    logger.info(f"MaskTunnel proxy server running on {srv.addr}")
-    logger.info("Press Ctrl+C to stop")
 
-    # Use threading.Event for clean shutdown
-    stop_event = threading.Event()
+    async def _run() -> None:
+        async with srv:
+            logger.info(f"MaskTunnel proxy server running on {srv.addr}")
+            logger.info("Press Ctrl+C to stop")
+            await asyncio.Future()
 
-    def signal_handler(signum, frame):
-        logger.info("Shutting down...")
-        stop_event.set()
-        srv.stop()
-        _stop_log_listener()
-
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    # Start server in background thread
-    server_thread = threading.Thread(target=srv.start, daemon=True)
-    server_thread.start()
-
-    # Wait for stop signal
     try:
-        stop_event.wait()
+        asyncio.run(_run())
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        srv.stop()
+        # Let the async context manager perform cleanup.
+        pass
+    finally:
         _stop_log_listener()
-
-    # Wait for server thread to finish
-    server_thread.join(timeout=5.0)
 
 
 @click.command()
@@ -117,15 +99,14 @@ def server(
 @click.option("--output", "-o", default="ca.pem", help="Output file for CA certificate")
 def get_ca(port: str, addr: str, output: str):
     """Get the CA certificate from a running server or generate a new one."""
-    from ._server import Server, ServerOptions
+    from ._server import Server
 
     init_logging(level=logging.WARNING)
 
-    options = ServerOptions(addr=addr, port=port)
-    srv = Server(options=options)
-    
+    srv = Server(addr=addr or None, port=int(port) if port else 8080)
     ca_pem = srv.get_ca_pem()
-    srv.stop()
+    srv.close()
+    _stop_log_listener()
     
     if ca_pem:
         with open(output, "wb") as f:

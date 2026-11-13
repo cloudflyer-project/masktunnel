@@ -16,6 +16,7 @@ import tarfile
 import zipfile
 from pathlib import Path
 from setuptools import setup, find_packages
+import setuptools
 from setuptools.command.build_py import build_py as _build_py
 from setuptools.command.develop import develop as _develop
 from urllib.request import urlretrieve
@@ -299,13 +300,20 @@ class PlatformWheel(_bdist_wheel):
     py3-none-any wheels and overwrite each other on upload.
     """
 
-    def finalize_options(self):
-        super().finalize_options()
-        self.root_is_pure = False
-
     def get_tag(self):
         _, _, platform_tag = super().get_tag()
         return "py3", "none", platform_tag
+
+
+class BinaryDistribution(setuptools.Distribution):
+    """Mark the distribution as platform-specific so packages stay top-level.
+
+    Without this, building under PlatformWheel puts every package into the
+    wheel's ``.data/purelib`` folder, which auditwheel rejects.
+    """
+
+    def has_ext_modules(self):
+        return True
 
 
 setup(
@@ -324,6 +332,7 @@ setup(
     python_requires=">=3.9",
     install_requires=install_requires,
     extras_require=extras_require,
+    distclass=BinaryDistribution,
     cmdclass={
         "build_py": BuildPyWithCFFI,
         "develop": DevelopWithCFFI,

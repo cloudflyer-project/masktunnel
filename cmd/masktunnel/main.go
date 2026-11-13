@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -27,6 +28,11 @@ func getLogLevel(count int) zerolog.Level {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "fingerprint" {
+		runFingerprintCommand(os.Args[2:])
+		return
+	}
+
 	var config masktunnel.Config
 
 	// Command line flags
@@ -65,4 +71,25 @@ func main() {
 	if err := server.Start(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to start server")
 	}
+}
+
+// runFingerprintCommand prints the fingerprints MaskTunnel applies for a
+// User-Agent without starting the proxy.
+func runFingerprintCommand(args []string) {
+	flags := pflag.NewFlagSet("fingerprint", pflag.ExitOnError)
+	userAgent := flags.StringP("user-agent", "U", "", "User-Agent to report fingerprints for (default: Chrome)")
+	flags.Parse(args)
+
+	report, err := masktunnel.GetFingerprintReport(*userAgent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to compute fingerprints: %v\n", err)
+		os.Exit(1)
+	}
+
+	encoded, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode fingerprints: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(encoded))
 }

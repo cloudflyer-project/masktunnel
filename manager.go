@@ -68,11 +68,7 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 	if err != nil {
 		m.logger.Debug().Err(err).Msg("Failed to parse User-Agent, using default Chrome")
 		// Use default Chrome fingerprint
-		browserFingerprint = &BrowserFingerprint{
-			Browser:          "Chrome",
-			HTTP2Fingerprint: "1:65536,2:0,4:6291456,6:262144|15663105|0|m,s,a,p",
-			TLSProfile:       "133",
-		}
+		browserFingerprint = defaultBrowserFingerprint()
 	}
 
 	// Log session creation with structured logging
@@ -127,33 +123,12 @@ func (m *Manager) createSession(userAgent, upstreamProxy string) (*azuretls.Sess
 
 // configureTLSFingerprint configures TLS fingerprint
 func (m *Manager) configureTLSFingerprint(session *azuretls.Session, browser string) error {
-	switch browser {
-	case "Chrome":
-		session.Browser = azuretls.Chrome
-		session.GetClientHelloSpec = azuretls.GetLastChromeVersion
-
-	case "Firefox":
-		session.Browser = azuretls.Firefox
-		session.GetClientHelloSpec = azuretls.GetLastFirefoxVersion
-
-	case "Safari":
-		session.Browser = azuretls.Safari
-		session.GetClientHelloSpec = azuretls.GetLastSafariVersion
-
-	case "Edge":
-		session.Browser = azuretls.Edge
-		session.GetClientHelloSpec = azuretls.GetLastChromeVersion // Edge is based on Chromium
-
-	case "iOS":
-		session.Browser = azuretls.Ios
-		session.GetClientHelloSpec = azuretls.GetLastIosVersion
-
-	default:
-		// Default to Chrome
-		session.Browser = azuretls.Chrome
-		session.GetClientHelloSpec = azuretls.GetLastChromeVersion
+	if browser != "Chrome" && browser != "Firefox" && browser != "Safari" && browser != "Edge" && browser != "iOS" {
 		m.logger.Debug().Str("browser", browser).Msg("Unknown browser, using default Chrome configuration")
 	}
+
+	session.Browser = azuretlsBrowserConstant(browser)
+	session.GetClientHelloSpec = browserClientHelloSpec(browser)
 
 	return nil
 }

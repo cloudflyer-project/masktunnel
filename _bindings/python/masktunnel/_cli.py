@@ -117,10 +117,23 @@ def get_ca(port: str, addr: str, output: str):
         sys.exit(1)
 
 
+@click.command()
+@click.option("--user-agent", "-U", default="", help="User-Agent to report fingerprints for (default: Chrome)")
+def fingerprint(user_agent: str):
+    """Print the TLS/HTTP2 fingerprints applied for a User-Agent."""
+    import json
+
+    from ._base import get_fingerprint_report
+
+    report = get_fingerprint_report(user_agent)
+    click.echo(json.dumps(report, indent=2, ensure_ascii=False))
+
+
 # Register commands
 cli.add_command(version)
 cli.add_command(server)
 cli.add_command(get_ca)
+cli.add_command(fingerprint)
 
 
 def main():

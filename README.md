@@ -95,6 +95,29 @@ The fingerprints returned should be different for each browser.
 
 > **Note:** The `-k` flag disables SSL certificate verification. For production use, see [Trusting the Certificate](#trusting-the-certificate) below.
 
+### Querying the Fingerprints
+
+MaskTunnel can report the exact fingerprints it applies for a User-Agent without making any network request:
+
+```bash
+./masktunnel fingerprint -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+```
+
+```json
+{
+  "UserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+  "Browser": "Firefox",
+  "TLSProfile": "120",
+  "JA3": "771,4865-4867-4866-49195-49199-52393-52392-49196-49200-49162-49161-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-34-18-51-43-13-45-28-27-65037,4588-29-23-24-25-256-257,0",
+  "JA3Hash": "6f7889b9fb1a62a9577e685c1fcfa919",
+  "JA4": "t13d1717h2_5b57614c22b0_3cbfd9057e0d",
+  "AkamaiFingerprint": "1:65536;2:0;4:131072;5:16384|12517377|0|m,s,a,p",
+  "AkamaiHash": "75c8630fcd19ba475331c39b3167d683"
+}
+```
+
+Without `-U` the default Chrome fingerprint is reported. Chrome shuffles its extension order per connection, so its JA3 text varies between connections (JA4 is not affected). The Python binding exposes the same data as `masktunnel.get_fingerprint_report(user_agent)` (returns a dict). JA3 values follow the same convention as passive fingerprint services like tls.peet.ws (GREASE values are excluded).
+
 ## Command Line Options
 
 | Option | Description | Default |

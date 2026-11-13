@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 _BACKEND: str
 
 from masktunnel_ffi import cancel_log_waiters as _ffi_cancel_log_waiters
+from masktunnel_ffi import get_fingerprint_report as _ffi_get_fingerprint_report
 from masktunnel_ffi import parse_duration as _ffi_parse_duration
 from masktunnel_ffi import seconds as _ffi_seconds
 from masktunnel_ffi import wait_for_log_entries as _ffi_wait_for_log_entries
@@ -343,3 +344,23 @@ def set_log_level(level: Union[int, str]) -> None:
     if isinstance(level, str):
         level = getattr(logging, level.upper())
     _logger.setLevel(level)
+
+
+def get_fingerprint_report(user_agent: str) -> Dict[str, Any]:
+    """Report the client fingerprints MaskTunnel applies for a User-Agent.
+
+    Returns the JA3 text/hash, JA4 and the HTTP/2 (Akamai) fingerprint and
+    hash the proxy uses for the given User-Agent. JA3 values follow the
+    convention of passive fingerprint services: GREASE values are excluded.
+
+    Args:
+        user_agent: User-Agent header value. Unparseable values fall back to
+            the default Chrome fingerprint, matching proxy behavior.
+
+    Returns:
+        Dict with keys: UserAgent, Browser, TLSProfile, JA3, JA3Hash, JA4,
+        AkamaiFingerprint, AkamaiHash.
+    """
+    if not isinstance(user_agent, str):
+        raise TypeError(f"user_agent must be str, got {type(user_agent).__name__}")
+    return dict(_ffi_get_fingerprint_report(user_agent))

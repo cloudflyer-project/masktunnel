@@ -11,6 +11,7 @@ require (
 	github.com/Noooste/websocket v1.0.3
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cristalhq/base64 v0.1.2
+	github.com/gaukas/clienthellod v0.4.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/mileusna/useragent v1.3.4
 	github.com/rs/zerolog v1.34.0
@@ -24,7 +25,6 @@ require (
 	github.com/bdandy/go-errors v1.2.2 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
-	github.com/gaukas/clienthellod v0.4.2 // indirect
 	github.com/gaukas/godicttls v0.0.4 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/gopacket v1.1.19 // indirect

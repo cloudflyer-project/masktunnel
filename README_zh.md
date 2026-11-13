@@ -93,6 +93,29 @@ curl -k -x http://localhost:8080 \
 
 > **注意：** `-k` 参数用于跳过 SSL 证书验证。生产环境请参阅下方的[信任证书](#信任证书)部分。
 
+### 查询指纹
+
+MaskTunnel 可以在不发起任何网络请求的情况下，报告它针对某个 User-Agent 实际使用的指纹：
+
+```bash
+./masktunnel fingerprint -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+```
+
+```json
+{
+  "UserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+  "Browser": "Firefox",
+  "TLSProfile": "120",
+  "JA3": "771,4865-4867-4866-49195-49199-52393-52392-49196-49200-49162-49161-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-34-18-51-43-13-45-28-27-65037,4588-29-23-24-25-256-257,0",
+  "JA3Hash": "6f7889b9fb1a62a9577e685c1fcfa919",
+  "JA4": "t13d1717h2_5b57614c22b0_3cbfd9057e0d",
+  "AkamaiFingerprint": "1:65536;2:0;4:131072;5:16384|12517377|0|m,s,a,p",
+  "AkamaiHash": "75c8630fcd19ba475331c39b3167d683"
+}
+```
+
+省略 `-U` 时报告默认的 Chrome 指纹。Chrome 每个连接会打乱扩展顺序，它的 JA3 文本会逐连接变化（JA4 不受影响）。Python 绑定提供同样的数据：`masktunnel.get_fingerprint_report(user_agent)`（返回 dict）。JA3 的取值口径与 tls.peet.ws 等指纹服务一致（不包含 GREASE 值）。
+
 ## 命令行选项
 
 | 选项 | 描述 | 默认值 |

@@ -3,6 +3,6 @@
 __version__ = "1.1.3"
 
 from ._server import Server
-from ._base import set_log_level
+from ._base import get_fingerprint_report, set_log_level
 
-__all__ = ["Server", "set_log_level"]
+__all__ = ["Server", "get_fingerprint_report", "set_log_level"]

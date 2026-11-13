@@ -24,6 +24,7 @@ _ffi.cdef(
     char* masktunnel_version(void);
     int64_t masktunnel_seconds(void);
     char* masktunnel_parse_duration(const char* s, int64_t* out);
+    char* masktunnel_get_fingerprint_report(const char* user_agent, masktunnel_buf* out);
 
     char* masktunnel_wait_for_log_entries(int64_t timeoutMs, masktunnel_buf* out);
     void masktunnel_cancel_log_waiters(void);
@@ -127,6 +128,22 @@ def parse_duration(s: str) -> int:
     err = _lib.masktunnel_parse_duration(s.encode("utf-8"), out)
     _raise_if_err(err)
     return int(out[0])
+
+
+def get_fingerprint_report(user_agent: str) -> dict[str, Any]:
+    out = _ffi.new("masktunnel_buf*")
+    err = _lib.masktunnel_get_fingerprint_report(user_agent.encode("utf-8"), out)
+    _raise_if_err(err)
+    raw = _take_buf(out[0])
+    if not raw:
+        return {}
+    try:
+        val = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception as exc:
+        raise MaskTunnelError(f"invalid fingerprint report: {exc}") from exc
+    if not isinstance(val, dict):
+        raise MaskTunnelError("invalid fingerprint report: not an object")
+    return dict(val)
 
 
 def wait_for_log_entries(timeout_ms: int) -> list[dict[str, Any]]:

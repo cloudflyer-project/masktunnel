@@ -122,6 +122,18 @@ func masktunnel_parse_duration(s *C.char, out *C.int64_t) *C.char {
 	return nil
 }
 
+//export masktunnel_get_fingerprint_report
+func masktunnel_get_fingerprint_report(ua *C.char, out *C.masktunnel_buf) *C.char {
+	if out == nil {
+		return errStr(errors.New("out is nil"))
+	}
+	data, err := masktunnel.GetFingerprintReportJSON(C.GoString(ua))
+	if err != nil {
+		return errStr(err)
+	}
+	return writeBuf(out, []byte(data))
+}
+
 //export masktunnel_wait_for_log_entries
 func masktunnel_wait_for_log_entries(timeout_ms C.int64_t, out *C.masktunnel_buf) *C.char {
 	if out == nil {

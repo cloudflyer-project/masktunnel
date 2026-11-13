@@ -300,9 +300,27 @@ class PlatformWheel(_bdist_wheel):
     py3-none-any wheels and overwrite each other on upload.
     """
 
+    _MACOS_ARCHES = {"x86_64": "x86_64", "arm64": "arm64"}
+
     def get_tag(self):
         _, _, platform_tag = super().get_tag()
+        platform_tag = self._resolve_macos_arch(platform_tag)
         return "py3", "none", platform_tag
+
+    @classmethod
+    def _resolve_macos_arch(cls, platform_tag):
+        """Replace a universal2 macOS tag with the wheel's real architecture.
+
+        The macOS runners ship universal2 interpreters, so both arch builds
+        would otherwise claim macosx_*_universal2 and collide even though the
+        bundled dylib is single-architecture.
+        """
+        if not platform_tag.startswith("macosx_") or not platform_tag.endswith("_universal2"):
+            return platform_tag
+        arch = cls._MACOS_ARCHES.get(platform.machine().lower())
+        if not arch:
+            return platform_tag
+        return platform_tag[: -len("universal2")] + arch
 
 
 class BinaryDistribution(setuptools.Distribution):

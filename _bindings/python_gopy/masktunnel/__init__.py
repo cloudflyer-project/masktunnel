@@ -1,6 +1,6 @@
 """masktunnel: HTTP MITM proxy with browser fingerprint simulation."""
 
-__version__ = "1.1.4"
+__version__ = "1.1.5"
 
 from ._server import Server
 from ._base import set_log_level

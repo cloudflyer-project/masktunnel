@@ -20,6 +20,11 @@ from setuptools.command.build_py import build_py as _build_py
 from setuptools.command.develop import develop as _develop
 from urllib.request import urlretrieve
 
+try:
+    from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
+except ImportError:  # setuptools >= 70.1 bundles bdist_wheel
+    from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
+
 here = Path(__file__).parent.absolute()
 
 # Global variables
@@ -285,6 +290,24 @@ class DevelopWithCFFI(_develop):
         super().run()
 
 
+class PlatformWheel(_bdist_wheel):
+    """Tag wheels with the target platform while keeping them Python-agnostic.
+
+    The bundled CFFI library is a plain shared library that every supported
+    Python version can load, so one wheel per platform is enough. Without an
+    explicit platform tag the Windows and macOS builds would both produce
+    py3-none-any wheels and overwrite each other on upload.
+    """
+
+    def finalize_options(self):
+        super().finalize_options()
+        self.root_is_pure = False
+
+    def get_tag(self):
+        _, _, platform_tag = super().get_tag()
+        return "py3", "none", platform_tag
+
+
 setup(
     name="masktunnel",
     version="1.1.5",
@@ -304,6 +327,7 @@ setup(
     cmdclass={
         "build_py": BuildPyWithCFFI,
         "develop": DevelopWithCFFI,
+        "bdist_wheel": PlatformWheel,
     },
     entry_points={
         "console_scripts": [

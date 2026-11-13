@@ -35,9 +35,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python: "3.9"
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             python: "3.13"
 
     steps:
@@ -257,7 +257,7 @@ jobs:
         include:
           - os: macos-15-intel
             arch: x64
-          - os: macos-14
+          - os: macos-15
             arch: arm64
 
     steps:
